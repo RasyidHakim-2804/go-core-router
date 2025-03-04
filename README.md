@@ -1,25 +1,25 @@
 # Go Core Router
 
-Go Core Router adalah pustaka Go untuk menangani routing HTTP dengan middleware yang dapat disesuaikan dan mendukung grup rute dengan prefix. Pustaka ini memberikan kemudahan untuk mengatur rute dan middleware dalam aplikasi Go, memisahkan logika pengolahan rute, serta menjaga aplikasi tetap terstruktur dengan baik.
+Go Core Router is a Go library for handling HTTP routing with customizable middleware and support for route groups with prefixes. This library makes it easier to organize routes and middleware in Go applications, separating route handling logic, and keeping the application well-structured.
 
-## Fitur Utama
+## Key Features
 
-- **Group Route**: Dengan group route, maka setiap endpoint pada objek router yang sama akan memiliki prefix, group middleware, dan pengecualian grup middleware dari objek router parentnya. Perubahan pada child tidak mempengaruhi parent, dan perubahan pada parent setelah baris dipanggilnya ftur ini tidak akan mengubah child sebelumnya. 
-- **Middlewares Route**: Setiap objek rute bisa menerapkan beberapa middleware sekaligus.
-- **Except Middlewares Route**: Dengan menerapkan ini maka router bisa mendaftarkan beberapa middleware yang tidak ingin dijalankan. 
-- **Middlewares Spesifik Endpoint**: Beberapa Middleware bisa diterapkan pada spesifik endpoint tertentu, dan ini tidak mempengaruhi endpoint lainnya dan objek routernya.
-- **Except Middlewares Spesifik Endpoint**: Dengan menerapkan ini, maka endpoint bisa mendaftarkan beberapa middlweare yang tidak ingin dijalankan pada spesifik endpoint tertentu. Fitur ini tidak akan mempengaruhi endpoint lainnya dan objek routernya.
-- **Prefix Routw**: Semua endpoint pada objek router ini dan anaknya akan memiliki prefix yang sama.
+- **Group Route**: With group routes, each endpoint on the same router object will have a prefix, group middleware, and exceptions for middleware groups from its parent router object. Changes to the child do not affect the parent, and changes to the parent after this feature is invoked will not modify the child.
+- **Middlewares Route**: Each route object can apply multiple middlewares simultaneously.
+- **Except Middlewares Route**: By applying this, the router can register several middlewares that should not be executed.
+- **Specific Endpoint Middlewares**: Multiple middlewares can be applied to specific endpoints, and this does not affect other endpoints or the router object.
+- **Except Specific Endpoint Middlewares**: By applying this, an endpoint can register several middlewares that should not be executed on specific endpoints. This feature will not affect other endpoints or the router object.
+- **Prefix Routes**: All endpoints on this router object and its children will share the same prefix.
 
-## Instalasi
+## Installation
 
-Untuk menginstal pustaka ini, jalankan perintah berikut di terminal:
+To install this library, run the following command in your terminal:
 
 ```bash
 go get github.com/RasyidHakim-2804/go-core-router
 ```
 
-Berikut adalah contoh aplikasi Go yang menggunakan `go-core-router`:
+Here's an example of a Go application that uses `go-core-router`:
 
 ```go
 package main
