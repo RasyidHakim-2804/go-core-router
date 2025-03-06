@@ -1,40 +1,37 @@
 package core
 
 import (
-	"maps"
 	"net/http"
 )
 
 // Router struct represents the routing system for handling HTTP requests.
 type Router struct {
-	queueMiddlewares []Middleware
-	middlewareStatus map[Middleware]bool
-	prefix           string
-	mux              *http.ServeMux
+	middlewares []MiddlewareAndStatus
+	prefix      string
+	mux         *http.ServeMux
 }
 
 // === PRIVATE FUNC ===
 
 func (router *Router) newRequestHandler(handler *Handler) *RequestHandler {
 	newRequestHandler := &RequestHandler{
-		handler:          *handler,
-		queueMiddlewares: make([]Middleware, len(router.queueMiddlewares)),
-		middlewareStatus: maps.Clone(router.middlewareStatus),
+		handler:     *handler,
+		middlewares: make([]MiddlewareAndStatus, len(router.middlewares)),
 	}
 
-	copy(newRequestHandler.queueMiddlewares, router.queueMiddlewares)
+	copy(newRequestHandler.middlewares, router.middlewares)
 	return newRequestHandler
 }
 
-func (router *Router) setQueueMiddleware(newMiddleware Middleware) {
+// func (router *Router) setQueueMiddleware(newMiddleware Middleware) {
 
-	for _, middleware := range router.queueMiddlewares {
-		if middleware == newMiddleware {
-			return
-		}
-	}
-	router.queueMiddlewares = append(router.queueMiddlewares, newMiddleware)
-}
+// 	for _, middleware := range router.queueMiddlewares {
+// 		if middleware == newMiddleware {
+// 			return
+// 		}
+// 	}
+// 	router.queueMiddlewares = append(router.queueMiddlewares, newMiddleware)
+// }
 
 // handles the handler logic.
 func (router *Router) next(method string, route string, requestHandler *RequestHandler) {
@@ -50,9 +47,8 @@ func (router *Router) next(method string, route string, requestHandler *RequestH
 
 func NewRouter() *Router {
 	return &Router{
-		middlewareStatus: make(map[Middleware]bool), // Initialize an empty map for middlewares
-		prefix:           "",                        // Initial empty prefix
-		mux:              http.NewServeMux(),        // Create a new ServeMux instance
+		prefix: "",                 // Initial empty prefix
+		mux:    http.NewServeMux(), // Create a new ServeMux instance
 	}
 }
 
@@ -64,8 +60,11 @@ func (router *Router) GetMux() *http.ServeMux {
 func (router *Router) Middlewares(middlewares ...Middleware) *Router {
 
 	for _, middleware := range middlewares {
-		router.setQueueMiddleware(middleware)
-		router.middlewareStatus[middleware] = true
+		router.middlewares = generateSliceMiddlewareAndStatus(
+			router.middlewares,
+			middleware,
+			true,
+		)
 	}
 
 	return router
@@ -75,8 +74,11 @@ func (router *Router) Middlewares(middlewares ...Middleware) *Router {
 func (router *Router) ExceptMiddlewares(exceptMiddlewares ...Middleware) *Router {
 
 	for _, middleware := range exceptMiddlewares {
-		router.setQueueMiddleware(middleware)
-		router.middlewareStatus[middleware] = false
+		router.middlewares = generateSliceMiddlewareAndStatus(
+			router.middlewares,
+			middleware,
+			false,
+		)
 	}
 
 	return router
@@ -92,11 +94,10 @@ func (router *Router) Prefix(prefix string) *Router {
 func (router *Router) Group(callback func(router *Router)) {
 	newRouter := &Router{}
 	newRouter.prefix = router.prefix
-	newRouter.middlewareStatus = maps.Clone(router.middlewareStatus)
-	newRouter.queueMiddlewares = make([]Middleware, len(router.queueMiddlewares))
+	newRouter.middlewares = make([]MiddlewareAndStatus, len(router.middlewares))
 	newRouter.mux = router.mux
 
-	copy(newRouter.queueMiddlewares, router.queueMiddlewares)
+	copy(newRouter.middlewares, router.middlewares)
 
 	callback(newRouter)
 }
