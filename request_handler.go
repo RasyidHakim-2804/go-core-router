@@ -6,14 +6,9 @@ import (
 
 type Handler = func(w http.ResponseWriter, r *http.Request)
 
-type middlewareAndStatus struct {
-	Middleware Middleware
-	status     bool
-}
-
 type RequestHandler struct {
 	handler     Handler
-	middlewares []middlewareAndStatus
+	middlewares []MiddlewareAndStatus
 }
 
 // === PRIVATE FUNC ===
@@ -43,19 +38,11 @@ func (requestHandler *RequestHandler) run(w http.ResponseWriter, r *http.Request
 }
 
 func (requestHandler *RequestHandler) setMiddelware(newMiddleware Middleware, status bool) {
-	exists := false
-
-	for i := range requestHandler.middlewares {
-		if requestHandler.middlewares[i].Middleware == newMiddleware {
-			requestHandler.middlewares[i].status = status
-			exists = true
-			break
-		}
-	}
-
-	if !exists {
-		requestHandler.middlewares = append(requestHandler.middlewares, middlewareAndStatus{newMiddleware, status})
-	}
+	requestHandler.middlewares = generateSliceMiddlewareAndStatus(
+		requestHandler.middlewares,
+		newMiddleware,
+		status,
+	)
 }
 
 // === PUBLIC FUNC ===
