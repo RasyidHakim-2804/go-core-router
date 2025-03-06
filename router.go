@@ -23,16 +23,6 @@ func (router *Router) newRequestHandler(handler *Handler) *RequestHandler {
 	return newRequestHandler
 }
 
-// func (router *Router) setQueueMiddleware(newMiddleware Middleware) {
-
-// 	for _, middleware := range router.queueMiddlewares {
-// 		if middleware == newMiddleware {
-// 			return
-// 		}
-// 	}
-// 	router.queueMiddlewares = append(router.queueMiddlewares, newMiddleware)
-// }
-
 // handles the handler logic.
 func (router *Router) next(method string, route string, requestHandler *RequestHandler) {
 
