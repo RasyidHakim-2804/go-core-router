@@ -6,21 +6,27 @@ import (
 
 type Handler = func(w http.ResponseWriter, r *http.Request)
 
+type middlewareAndStatus struct {
+	Middleware Middleware
+	status     bool
+}
+
 type RequestHandler struct {
-	handler          Handler
-	queueMiddlewares []Middleware
-	middlewareStatus map[Middleware]bool
+	handler     Handler
+	middlewares []middlewareAndStatus
 }
 
 // === PRIVATE FUNC ===
 
 func (requestHandler *RequestHandler) executeMiddlewares(w http.ResponseWriter, r *http.Request) bool {
 
-	for _, middleware := range requestHandler.queueMiddlewares {
-		if requestHandler.middlewareStatus[middleware] {
-			if !middleware.Next(w, r) {
-				return false
-			}
+	for _, middlewareStatus := range requestHandler.middlewares {
+		if !middlewareStatus.status {
+			continue
+		}
+
+		if !middlewareStatus.Middleware.Next(w, r) {
+			return false
 		}
 	}
 
@@ -36,14 +42,20 @@ func (requestHandler *RequestHandler) run(w http.ResponseWriter, r *http.Request
 	requestHandler.handler(w, r)
 }
 
-func (requestHandler *RequestHandler) setQueueMiddleware(newMiddleware Middleware) {
+func (requestHandler *RequestHandler) setMiddelware(newMiddleware Middleware, status bool) {
+	exists := false
 
-	for _, middleware := range requestHandler.queueMiddlewares {
-		if middleware == newMiddleware {
-			return
+	for i := range requestHandler.middlewares {
+		if requestHandler.middlewares[i].Middleware == newMiddleware {
+			requestHandler.middlewares[i].status = status
+			exists = true
+			break
 		}
 	}
-	requestHandler.queueMiddlewares = append(requestHandler.queueMiddlewares, newMiddleware)
+
+	if !exists {
+		requestHandler.middlewares = append(requestHandler.middlewares, middlewareAndStatus{newMiddleware, status})
+	}
 }
 
 // === PUBLIC FUNC ===
@@ -51,8 +63,7 @@ func (requestHandler *RequestHandler) setQueueMiddleware(newMiddleware Middlewar
 func (requestHandler *RequestHandler) ExceptMiddlewares(exceptMiddlewares ...Middleware) *RequestHandler {
 
 	for _, middleware := range exceptMiddlewares {
-		requestHandler.setQueueMiddleware(middleware)
-		requestHandler.middlewareStatus[middleware] = false
+		requestHandler.setMiddelware(middleware, false)
 	}
 
 	return requestHandler
@@ -61,8 +72,7 @@ func (requestHandler *RequestHandler) ExceptMiddlewares(exceptMiddlewares ...Mid
 func (requestHandler *RequestHandler) Middlewares(middlewares ...Middleware) *RequestHandler {
 
 	for _, middleware := range middlewares {
-		requestHandler.setQueueMiddleware(middleware)
-		requestHandler.middlewareStatus[middleware] = true
+		requestHandler.setMiddelware(middleware, true)
 	}
 
 	return requestHandler
