@@ -47,7 +47,7 @@ func (router *Router) GetMux() *http.ServeMux {
 }
 
 // Allows adding multiple middlewares to the Router.
-func (router *Router) Middlewares(middlewares ...Middleware) *Router {
+func (router *Router) Middlewares(middlewares ...MiddlewareInterface) *Router {
 
 	for _, middleware := range middlewares {
 		router.middlewares = generateSliceMiddlewareAndStatus(
@@ -61,7 +61,7 @@ func (router *Router) Middlewares(middlewares ...Middleware) *Router {
 }
 
 // Allows excluding multiple middlewares from being applied to the Router.
-func (router *Router) ExceptMiddlewares(exceptMiddlewares ...Middleware) *Router {
+func (router *Router) ExceptMiddlewares(exceptMiddlewares ...MiddlewareInterface) *Router {
 
 	for _, middleware := range exceptMiddlewares {
 		router.middlewares = generateSliceMiddlewareAndStatus(
