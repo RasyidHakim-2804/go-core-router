@@ -13,14 +13,29 @@ type RequestHandler struct {
 
 // === PRIVATE FUNC ===
 
-func (requestHandler *RequestHandler) executeMiddlewares(w http.ResponseWriter, r *http.Request) bool {
+func (requestHandler *RequestHandler) executeBeforeMiddlewares(w http.ResponseWriter, r *http.Request) bool {
 
 	for _, middlewareStatus := range requestHandler.middlewares {
 		if !middlewareStatus.status {
 			continue
 		}
 
-		if !middlewareStatus.Middleware.Next(w, r) {
+		if !middlewareStatus.Middleware.Before(w, r) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (requestHandler *RequestHandler) executeAfterMiddlewares(w http.ResponseWriter, r *http.Request) bool {
+
+	for _, middlewareStatus := range requestHandler.middlewares {
+		if !middlewareStatus.status {
+			continue
+		}
+
+		if !middlewareStatus.Middleware.After(w, r) {
 			return false
 		}
 	}
@@ -30,11 +45,15 @@ func (requestHandler *RequestHandler) executeMiddlewares(w http.ResponseWriter, 
 
 func (requestHandler *RequestHandler) run(w http.ResponseWriter, r *http.Request) {
 
-	if !requestHandler.executeMiddlewares(w, r) {
+	if !requestHandler.executeBeforeMiddlewares(w, r) {
 		return
 	}
 
 	requestHandler.handler(w, r)
+
+	if !requestHandler.executeAfterMiddlewares(w, r) {
+		return
+	}
 }
 
 func (requestHandler *RequestHandler) setMiddelware(newMiddleware MiddlewareInterface, status bool) {
