@@ -8,9 +8,11 @@ import (
 )
 
 type GlobalMiddleware struct {
+	core.Middleware
 }
 
 type FirstMiddleware struct {
+	core.Middleware
 }
 
 func (gm GlobalMiddleware) Next(w http.ResponseWriter, r *http.Request) bool {
