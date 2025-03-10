@@ -11,10 +11,6 @@ type GlobalMiddleware struct {
 	core.Middleware
 }
 
-type FirstMiddleware struct {
-	core.Middleware
-}
-
 func (gm GlobalMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
 	fmt.Println("this is global middleware")
 	if contentType := r.Header.Get("Accept"); contentType != "application/json" {
@@ -26,10 +22,18 @@ func (gm GlobalMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// <--- END GLOBAL MIDDLEWARE -->
+
+type FirstMiddleware struct {
+	core.Middleware
+}
+
 func (fm FirstMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
 	fmt.Println("this is first Middleware")
 	return true
 }
+
+// <-- END FIRST MIDDLEWARE -->
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	mesage := "Hello world"
