@@ -33,6 +33,12 @@ func (router *Router) next(method string, route string, requestHandler *RequestH
 	})
 }
 
+func (router *Router) addRoute(method string, route string, handler Handler) *RequestHandler {
+	requestHandler := router.newRequestHandler(&handler)
+	router.next(method, route, requestHandler)
+	return requestHandler
+}
+
 // === PUBLIC FUNC ===
 
 func NewRouter() *Router {
@@ -93,25 +99,17 @@ func (router *Router) Group(callback func(router *Router)) {
 }
 
 func (router *Router) Get(route string, handler Handler) *RequestHandler {
-	requestHandler := router.newRequestHandler(&handler)
-	router.next("GET", route, requestHandler)
-	return requestHandler
+	return router.addRoute("GET", route, handler)
 }
 
 func (router *Router) Post(route string, handler Handler) *RequestHandler {
-	requestHandler := router.newRequestHandler(&handler)
-	router.next("POST", route, requestHandler)
-	return requestHandler
+	return router.addRoute("POST", route, handler)
 }
 
 func (router *Router) Put(route string, handler Handler) *RequestHandler {
-	requestHandler := router.newRequestHandler(&handler)
-	router.next("PUT", route, requestHandler)
-	return requestHandler
+	return router.addRoute("PUT", route, handler)
 }
 
 func (router *Router) Delete(route string, handler Handler) *RequestHandler {
-	requestHandler := router.newRequestHandler(&handler)
-	router.next("DELETE", route, requestHandler)
-	return requestHandler
+	return router.addRoute("DELETE", route, handler)
 }
