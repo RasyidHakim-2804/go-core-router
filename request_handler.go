@@ -51,9 +51,7 @@ func (requestHandler *RequestHandler) run(w http.ResponseWriter, r *http.Request
 
 	requestHandler.handler(w, r)
 
-	if !requestHandler.executeAfterMiddlewares(w, r) {
-		return
-	}
+	requestHandler.executeAfterMiddlewares(w, r)
 }
 
 func (requestHandler *RequestHandler) setMiddelware(newMiddleware MiddlewareInterface, status bool) {
