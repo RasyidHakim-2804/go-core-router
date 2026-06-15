@@ -56,7 +56,7 @@ func (requestHandler *RequestHandler) run(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (requestHandler *RequestHandler) setMiddelware(newMiddleware MiddlewareInterface, status bool) {
+func (requestHandler *RequestHandler) setMiddleware(newMiddleware MiddlewareInterface, status bool) {
 	requestHandler.middlewares = generateSliceMiddlewareAndStatus(
 		requestHandler.middlewares,
 		newMiddleware,
@@ -69,7 +69,7 @@ func (requestHandler *RequestHandler) setMiddelware(newMiddleware MiddlewareInte
 func (requestHandler *RequestHandler) ExceptMiddlewares(exceptMiddlewares ...MiddlewareInterface) *RequestHandler {
 
 	for _, middleware := range exceptMiddlewares {
-		requestHandler.setMiddelware(middleware, false)
+		requestHandler.setMiddleware(middleware, false)
 	}
 
 	return requestHandler
@@ -78,7 +78,7 @@ func (requestHandler *RequestHandler) ExceptMiddlewares(exceptMiddlewares ...Mid
 func (requestHandler *RequestHandler) Middlewares(middlewares ...MiddlewareInterface) *RequestHandler {
 
 	for _, middleware := range middlewares {
-		requestHandler.setMiddelware(middleware, true)
+		requestHandler.setMiddleware(middleware, true)
 	}
 
 	return requestHandler
