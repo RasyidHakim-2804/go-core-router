@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/RasyidHakim-2804/go-core-router"
@@ -37,17 +38,17 @@ func (fm FirstMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	mesage := "Hello world"
-	w.Write([]byte(mesage))
+	io.WriteString(w, mesage)
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
 	message := "This is from home"
-	w.Write([]byte(message))
+	io.WriteString(w, message)
 }
 
 func aboutHandler(w http.ResponseWriter, r *http.Request) {
 	message := "This is from about"
-	w.Write([]byte(message))
+	io.WriteString(w, message)
 }
 
 func main() {
