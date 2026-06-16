@@ -27,6 +27,7 @@ package main
 import (
     "fmt"
     "net/http"
+    "time"
     "github.com/RasyidHakim-2804/go-core-router"
 )
 
@@ -38,7 +39,16 @@ func handler(w http.ResponseWriter, r *http.Request) {
 func main() {
     router := core.NewRouter()
     router.Get("/index", handler)
-    http.ListenAndServe(":8000", router.GetMux())
+
+    server := &http.Server{
+        Addr:              ":8000",
+        Handler:           router.GetMux(),
+        ReadHeaderTimeout: 3 * time.Second,
+        ReadTimeout:       5 * time.Second,
+        WriteTimeout:      10 * time.Second,
+        IdleTimeout:       120 * time.Second,
+    }
+    server.ListenAndServe()
 }
 ```
 ## Groupe Route
@@ -86,6 +96,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/RasyidHakim-2804/go-core-router"
 )
@@ -147,7 +158,16 @@ func main() {
 	})
 
 	fmt.Println("starting web server at http://localhost:8000/")
-	http.ListenAndServe(":8000", router.GetMux())
+
+	server := &http.Server{
+		Addr:              ":8000",
+		Handler:           router.GetMux(),
+		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	server.ListenAndServe()
 }
 
 
