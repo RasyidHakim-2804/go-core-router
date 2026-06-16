@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/RasyidHakim-2804/go-core-router"
 )
@@ -65,5 +66,17 @@ func main() {
 	})
 
 	fmt.Println("starting web server at http://localhost:8000/")
-	http.ListenAndServe(":8000", router.GetMux())
+
+	server := &http.Server{
+		Addr:              ":8000",
+		Handler:           router.GetMux(),
+		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	if err := server.ListenAndServe(); err != nil {
+		fmt.Printf("Server failed: %v\n", err)
+	}
 }
