@@ -69,6 +69,19 @@ func TestRouter_Middlewares(t *testing.T) {
 	}
 }
 
+func TestNewRouter(t *testing.T) {
+	router := NewRouter()
+	if router == nil {
+		t.Fatal("Expected NewRouter() to return a non-nil Router instance")
+	}
+	if router.mux == nil {
+		t.Error("Expected router.mux to be initialized (non-nil)")
+	}
+	if router.prefix != "" {
+		t.Errorf("Expected router.prefix to be empty, got '%s'", router.prefix)
+	}
+}
+
 func TestRouterPrefix(t *testing.T) {
 	router := &Router{}
 	router.Prefix("/api/v1")
