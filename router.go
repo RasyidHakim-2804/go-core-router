@@ -43,8 +43,7 @@ func (router *Router) addRoute(method string, route string, handler Handler) *Re
 
 func NewRouter() *Router {
 	return &Router{
-		prefix: "",                 // Initial empty prefix
-		mux:    http.NewServeMux(), // Create a new ServeMux instance
+		mux: http.NewServeMux(), // Create a new ServeMux instance
 	}
 }
 
