@@ -2,9 +2,8 @@ package main
 
 import (
 	"fmt"
-	"io"
+	"log"
 	"net/http"
-	"time"
 
 	"github.com/RasyidHakim-2804/go-core-router"
 )
@@ -39,17 +38,17 @@ func (fm FirstMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	mesage := "Hello world"
-	io.WriteString(w, mesage)
+	w.Write([]byte(mesage))
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
 	message := "This is from home"
-	io.WriteString(w, message)
+	w.Write([]byte(message))
 }
 
 func aboutHandler(w http.ResponseWriter, r *http.Request) {
 	message := "This is from about"
-	io.WriteString(w, message)
+	w.Write([]byte(message))
 }
 
 func main() {
@@ -65,18 +64,8 @@ func main() {
 		router2.Get("/about", aboutHandler).ExceptMiddlewares(GlobalMiddleware{}) // /home/about
 	})
 
-	fmt.Println("starting web server at http://localhost:8000/")
-
-	server := &http.Server{
-		Addr:              ":8000",
-		Handler:           router.GetMux(),
-		ReadHeaderTimeout: 3 * time.Second,
-		ReadTimeout:       5 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
-
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Printf("Server failed: %v\n", err)
+	log.Println("starting web server at http://localhost:8000/")
+	if err := http.ListenAndServe(":8000", router); err != nil {
+		log.Fatal(err)
 	}
 }

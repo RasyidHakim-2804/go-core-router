@@ -27,7 +27,6 @@ package main
 import (
     "fmt"
     "net/http"
-    "time"
     "github.com/RasyidHakim-2804/go-core-router"
 )
 
@@ -39,16 +38,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 func main() {
     router := core.NewRouter()
     router.Get("/index", handler)
-
-    server := &http.Server{
-        Addr:              ":8000",
-        Handler:           router.GetMux(),
-        ReadHeaderTimeout: 3 * time.Second,
-        ReadTimeout:       5 * time.Second,
-        WriteTimeout:      10 * time.Second,
-        IdleTimeout:       120 * time.Second,
-    }
-    server.ListenAndServe()
+    http.ListenAndServe(":8000", router.GetMux())
 }
 ```
 ## Groupe Route
@@ -96,7 +86,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/RasyidHakim-2804/go-core-router"
 )
@@ -158,17 +147,57 @@ func main() {
 	})
 
 	fmt.Println("starting web server at http://localhost:8000/")
-
-	server := &http.Server{
-		Addr:              ":8000",
-		Handler:           router.GetMux(),
-		ReadHeaderTimeout: 3 * time.Second,
-		ReadTimeout:       5 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
-	server.ListenAndServe()
+	http.ListenAndServe(":8000", router.GetMux())
 }
 
 
 ```
+## Lifecycle and configuration
+
+Finish configuration before serving requests. Groups copy configuration at creation;
+registered endpoints also snapshot the middleware list. Copies are shallow: pointer
+middleware instances remain shared and must handle concurrent requests safely.
+Use `http.ListenAndServe(":8000", router)` to freeze configuration on the first
+request, including unmatched requests. `GetMux()` remains supported; when serving
+it directly, configuration freezes on the first request reaching a registered
+route. Later configuration changes panic with a descriptive message.
+
+`Before` runs in registration order. For each middleware whose `Before` returned
+true, `After` runs in reverse order, including when a later middleware rejects the
+request or the handler panics. The rejecting middleware's `After` is not run.
+The `After` boolean is retained for source compatibility but ignored, so all entered
+middleware can finish cleanup. Panics propagate to the caller; the router does not
+translate them into HTTP responses. `After` cannot change headers already sent.
+
+Comparable middleware values retain value identity (pointers use pointer identity).
+Non-comparable values use their concrete type as identity. Re-registering an identity
+updates its instance and enables it without moving its position. To distinguish
+multiple instances, use stable, unique names:
+
+```go
+first := core.NamedMiddleware{Name: "first", MiddlewareInterface: FirstMiddleware{}}
+second := core.NamedMiddleware{Name: "second", MiddlewareInterface: FirstMiddleware{}}
+router.Middlewares(first, second)
+router.Get("/example", handler).ExceptMiddlewares(first)
+```
+
+Nil middleware, including typed nil pointers, and empty middleware names are rejected.
+Exclusions persist in configuration and can be re-enabled with `Middlewares`.
+
+Paths are joined with a leading slash and repeated slashes are collapsed. Trailing
+slashes are preserved on endpoint paths because they have subtree meaning in
+`ServeMux`. Prefixes have no trailing slash. Prefix changes affect future registrations.
+Go `ServeMux` wildcard syntax is supported; Laravel-style `:id` syntax is not added.
+
+`Get`, `Post`, `Put`, `Delete`, `Patch`, `Head`, and `Options` panic with registration
+context on invalid or conflicting routes. Use `Handle` to receive these errors:
+
+```go
+endpoint, err := router.Handle("GET", "/users/{id}", handler)
+if err != nil {
+    // Report the configuration error before starting the server.
+}
+_ = endpoint
+```
+
+`Handle` also rejects nil handlers. Middleware and configuration misuse still panic.
