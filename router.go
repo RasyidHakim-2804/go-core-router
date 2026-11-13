@@ -30,6 +30,13 @@ type Router struct {
 
 // === PRIVATE FUNC ===
 
+// clone copies configuration; callers hold the shared configuration lock.
+// Middleware instances and the mux remain shared.
+func (router *Router) clone() *Router {
+	return &Router{config: router.config, mux: router.mux, prefix: router.prefix,
+		middlewares: append([]MiddlewareAndStatus(nil), router.middlewares...)}
+}
+
 func (router *Router) newRequestHandler(handler *Handler) *RequestHandler {
 	newRequestHandler := &RequestHandler{
 		handler:     *handler,
@@ -65,51 +72,53 @@ func (router *Router) GetMux() *http.ServeMux {
 	return router.mux
 }
 
-// Allows adding multiple middlewares to the Router.
+// Middlewares returns a derived router with middleware enabled; the receiver is unchanged.
 func (router *Router) Middlewares(middlewares ...MiddlewareInterface) *Router {
 	router.config.edit()
 	defer router.config.mu.Unlock()
+	derived := router.clone()
 
 	for _, middleware := range middlewares {
-		router.middlewares = generateSliceMiddlewareAndStatus(
-			router.middlewares,
+		derived.middlewares = generateSliceMiddlewareAndStatus(
+			derived.middlewares,
 			middleware,
 			true,
 		)
 	}
 
-	return router
+	return derived
 }
 
-// Allows excluding multiple middlewares from being applied to the Router.
+// ExceptMiddlewares returns a derived router with middleware disabled; the receiver is unchanged.
 func (router *Router) ExceptMiddlewares(exceptMiddlewares ...MiddlewareInterface) *Router {
 	router.config.edit()
 	defer router.config.mu.Unlock()
+	derived := router.clone()
 
 	for _, middleware := range exceptMiddlewares {
-		router.middlewares = generateSliceMiddlewareAndStatus(
-			router.middlewares,
+		derived.middlewares = generateSliceMiddlewareAndStatus(
+			derived.middlewares,
 			middleware,
 			false,
 		)
 	}
 
-	return router
+	return derived
 }
 
-// Adds a prefix to all routes in the Router.
+// Prefix returns a derived router with an appended prefix; the receiver is unchanged.
 func (router *Router) Prefix(prefix string) *Router {
 	router.config.edit()
 	defer router.config.mu.Unlock()
-	router.prefix = strings.TrimRight(joinRoute(router.prefix, prefix), "/")
-	return router
+	derived := router.clone()
+	derived.prefix = strings.TrimRight(joinRoute(derived.prefix, prefix), "/")
+	return derived
 }
 
 // create a new router based on the parent router, the middleware and prefix will be inherited.
 func (router *Router) Group(callback func(router *Router)) {
 	router.config.edit()
-	newRouter := &Router{prefix: router.prefix, mux: router.mux, config: router.config,
-		middlewares: append([]MiddlewareAndStatus(nil), router.middlewares...)}
+	newRouter := router.clone()
 	router.config.mu.Unlock()
 
 	callback(newRouter)

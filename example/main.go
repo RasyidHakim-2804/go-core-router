@@ -1,71 +1,159 @@
+// Run: go run ./example
+// To serve the underlying mux instead: go run ./example -mux
+//
+// Try:
+//
+//	curl localhost:8000/index
+//	curl localhost:8000/health
+//	curl localhost:8000/files/images/logo.png
+//	curl localhost:8000/api/v1/users/42
+//	curl -H 'X-Demo-Key: secret' localhost:8000/api/v1/users/42
+//	curl -X POST -H 'X-Demo-Key: secret' localhost:8000/api/v1/users
+//	curl -X PUT -H 'X-Demo-Key: secret' localhost:8000/api/v1/users/42
+//	curl -X PATCH -H 'X-Demo-Key: secret' localhost:8000/api/v1/users/42
+//	curl -X DELETE -H 'X-Demo-Key: secret' localhost:8000/api/v1/users/42
+//	curl -I -H 'X-Demo-Key: secret' localhost:8000/api/v1/users/42
+//	curl -i -X OPTIONS -H 'X-Demo-Key: secret' localhost:8000/api/v1/users/42
+//	curl localhost:8000/api/v1/public
+//	curl localhost:8000/api/public/info
+//	curl localhost:8000/api/public/logged
+//	curl localhost:8000/api/v1/status
+//	curl localhost:8000/custom
+//	curl localhost:8000/panic
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
-	"github.com/RasyidHakim-2804/go-core-router"
+	core "github.com/RasyidHakim-2804/go-core-router"
 )
 
-type GlobalMiddleware struct {
+// Embedding core.Middleware supplies default Before and After methods.
+// Instances can be shared across requests: keep them immutable or synchronize state.
+type TraceMiddleware struct {
 	core.Middleware
+	Label string
 }
 
-func (gm GlobalMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
-	fmt.Println("this is global middleware")
-	if contentType := r.Header.Get("Accept"); contentType != "application/json" {
+func (m TraceMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
+	log.Printf("%s Before: %s %s", m.Label, r.Method, r.URL.Path)
+	return true
+}
 
-		http.Error(w, "header 'Accept' must 'application/json'", http.StatusUnsupportedMediaType)
+func (m TraceMiddleware) After(w http.ResponseWriter, r *http.Request) bool {
+	log.Printf("%s After: %s %s", m.Label, r.Method, r.URL.Path)
+	// The return value is retained by the interface but currently ignored.
+	return true
+}
 
+// A fixed header is only a demonstration of rejection, not production authentication.
+type DemoGate struct{ core.Middleware }
+
+func (DemoGate) Before(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("X-Demo-Key") != "secret" {
+		http.Error(w, "send X-Demo-Key: secret", http.StatusUnauthorized)
 		return false
 	}
 	return true
 }
 
-// <--- END GLOBAL MIDDLEWARE -->
-
-type FirstMiddleware struct {
-	core.Middleware
-}
-
-func (fm FirstMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
-	fmt.Println("this is first Middleware")
-	return true
-}
-
-// <-- END FIRST MIDDLEWARE -->
-
-func handler(w http.ResponseWriter, r *http.Request) {
-	mesage := "Hello world"
-	w.Write([]byte(mesage))
-}
-
-func homeHandler(w http.ResponseWriter, r *http.Request) {
-	message := "This is from home"
-	w.Write([]byte(message))
-}
-
-func aboutHandler(w http.ResponseWriter, r *http.Request) {
-	message := "This is from about"
-	w.Write([]byte(message))
+// core.Handler is an alias for func(http.ResponseWriter, *http.Request).
+func message(text string) core.Handler {
+	return func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, text) }
 }
 
 func main() {
+	useMux := flag.Bool("mux", false, "serve using GetMux instead of Router.ServeHTTP")
+	flag.Parse()
 	router := core.NewRouter()
 
-	router.Middlewares(GlobalMiddleware{}, FirstMiddleware{})
-	router.Get("/index", handler) // /index
+	// Distinct names allow independent control of instances of the same type.
+	access := core.NamedMiddleware{Name: "access", MiddlewareInterface: TraceMiddleware{Label: "access"}}
+	audit := core.NamedMiddleware{Name: "audit", MiddlewareInterface: TraceMiddleware{Label: "audit"}}
+	router = router.Middlewares(access, audit)
+	// Router-level exclusion; re-registering an identity re-enables its existing slot.
+	router = router.ExceptMiddlewares(audit)
+	router = router.Middlewares(audit)
+	router.Get("/index", message("Hello world"))
+	router.Get("/health", message("ok")).ExceptMiddlewares(access, audit)
 
-	router.Group(func(router2 *core.Router) {
-		router2.Prefix("/home")
-
-		router2.Get("/index", homeHandler).ExceptMiddlewares(FirstMiddleware{})   // /home/index
-		router2.Get("/about", aboutHandler).ExceptMiddlewares(GlobalMiddleware{}) // /home/about
+	// Wildcard captures the remaining path; this example does not read files from disk.
+	router.Get("/files/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "path=%s\n", r.PathValue("path"))
 	})
+	// {$} matches only the root; / alone would be a subtree pattern.
+	router.Get("/{$}", message("Go Core Router examples: start with /index"))
 
-	log.Println("starting web server at http://localhost:8000/")
-	if err := http.ListenAndServe(":8000", router); err != nil {
+	router.Prefix("/api/").Middlewares(TraceMiddleware{Label: "api"}).Group(func(api *core.Router) {
+		api.Prefix("/v1").Middlewares(DemoGate{}).Group(func(v1 *core.Router) {
+			// The endpoint snapshots middleware at registration time.
+			v1.Get("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, "user=%s\n", r.PathValue("id"))
+			}).Middlewares(TraceMiddleware{Label: "endpoint"})
+			v1.Post("/users", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusCreated)
+				fmt.Fprintln(w, "demo user created")
+			})
+			v1.Put("/users/{id}", message("demo user replaced"))
+			v1.Patch("/users/{id}", message("demo user updated"))
+			v1.Delete("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})
+			v1.Head("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Demo-User", r.PathValue("id"))
+				w.WriteHeader(http.StatusOK)
+			})
+			v1.Options("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Allow", "GET, HEAD, PUT, PATCH, DELETE, OPTIONS")
+				w.WriteHeader(http.StatusNoContent)
+			})
+			v1.Get("/public", message("endpoint without gate")).ExceptMiddlewares(DemoGate{})
+			// This derived router excludes the gate without changing v1.
+			v1.ExceptMiddlewares(DemoGate{}).Get("//status", message("v1 ready")) // Repeated slash normalized.
+		})
+		api.Prefix("/public").ExceptMiddlewares(access, audit).Group(func(public *core.Router) {
+			public.Get("/info", message("public group"))
+			public.Get("/logged", message("access re-enabled for this endpoint")).Middlewares(access)
+		})
+	})
+	// Group changes leave the parent configuration unchanged.
+	endpoint, err := router.Handle(http.MethodGet, "/custom", message("registered with Handle"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	endpoint.Middlewares(TraceMiddleware{Label: "custom"})
+
+	// Handle returns registration errors; helpers such as Get panic on these errors.
+	if _, err := router.Handle(http.MethodGet, "/custom", message("duplicate")); err != nil {
+		log.Printf("expected duplicate registration error: %v", err)
+	}
+
+	// Entered middleware run After in reverse order, even on panic. The router lets
+	// the panic propagate to net/http, which logs it and closes/resets the request.
+	// For a rejected Before, earlier middleware run After; the rejecting one does not.
+	router.Get("/panic", func(http.ResponseWriter, *http.Request) { panic("intentional demo panic") })
+
+	// Configure everything before serving. The first request freezes the router,
+	// groups and endpoints; later configuration calls panic.
+	var handler http.Handler = router
+	if *useMux {
+		handler = router.GetMux()
+		// Serving the mux directly freezes configuration only once a registered route runs.
+		// Direct registration on the returned mux bypasses the router's configuration guard.
+	}
+	server := &http.Server{
+		Addr: ":8000", Handler: handler,
+		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	log.Println("starting demo server at http://localhost:8000/")
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
