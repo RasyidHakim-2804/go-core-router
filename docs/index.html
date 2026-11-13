@@ -16,10 +16,11 @@
 <a class="level-3" href="#remaining-path">Remaining path</a>
 <a class="level-3" href="#exact-root-and-subtrees">Exact root and subtrees</a>
 <a class="level-2" href="#middleware">Middleware</a>
+<a class="level-3" href="#passing-context-to-a-handler">Passing context to a handler</a>
 <a class="level-3" href="#router-group-and-endpoint-middleware">Router, group, and endpoint middleware</a>
-<a class="level-3" href="#exclusions-and-re-enabling">Exclusions and re-enabling</a>
-<a class="level-3" href="#named-middleware-and-identity">Named middleware and identity</a>
-<a class="level-3" href="#execution-order-rejection-and-panic">Execution order, rejection, and panic</a>
+<a class="level-3" href="#named-middleware-exclusions-and-re-enabling">Named middleware, exclusions, and re-enabling</a>
+<a class="level-3" href="#execution-order-and-chain-construction">Execution order and chain construction</a>
+<a class="level-3" href="#migrating-from-before-after-middleware">Migrating from Before/After middleware</a>
 <a class="level-2" href="#chaining-without-modifying-the-original-router">Immutable chaining</a>
 <a class="level-2" href="#groups-and-prefixes">Groups and prefixes</a>
 <a class="level-2" href="#serving-and-configuration-lifecycle">Serving &amp; lifecycle</a>
@@ -35,7 +36,7 @@
 <li>Path parameters, catch-all wildcards, and exact-root patterns through <code>ServeMux</code>.</li>
 <li>Nested groups with inherited prefixes and middleware configuration.</li>
 <li>Middleware additions, exclusions, and re-enabling at router, group, and endpoint level.</li>
-<li>Named middleware instances and <code>Before</code>/<code>After</code> hooks.</li>
+<li>Named middleware instances and standard HTTP handler wrappers with context propagation.</li>
 <li>Direct <code>http.Handler</code> compatibility and access to the underlying mux.</li>
 </ul>
 <h2 id="installation"><a class="heading-link" href="#installation" aria-label="Link to Installation">#</a>Installation</h2>
@@ -84,7 +85,7 @@ router.Options(&quot;/users/{id}&quot;, userOptions)</code></pre></div>
 if err != nil {
     log.Fatal(err)
 }
-endpoint.Middlewares(TraceMiddleware{Label: &quot;status&quot;})</code></pre></div>
+endpoint.Middlewares(Logging)</code></pre></div>
 <p><code>Handle</code> returns errors for nil handlers, invalid methods, and invalid or conflicting patterns. The convenience helpers panic on these registration errors. Configuration after serving starts also panics, including calls to <code>Handle</code>.</p>
 <h2 id="path-parameters-and-wildcards"><a class="heading-link" href="#path-parameters-and-wildcards" aria-label="Link to Path parameters and wildcards">#</a>Path parameters and wildcards</h2>
 <h3 id="one-path-segment"><a class="heading-link" href="#one-path-segment" aria-label="Link to One path segment">#</a>One path segment</h3>
@@ -103,81 +104,84 @@ router.Get(&quot;/docs/&quot;, docsHandler)     // /docs/ and paths beneath it.
 router.Get(&quot;/docs/{$}&quot;, indexHandler) // Only /docs/; more specific than /docs/.</code></pre></div>
 <p>A trailing slash has subtree meaning, so <code>&quot;/&quot;</code> alone is a fallback subtree pattern rather than an exact-root pattern. Routing uses Go <code>ServeMux</code> syntax, not Laravel-style <code>:id</code> or <code>*path</code> syntax. Matching, precedence, redirects, and default 404/405 responses come from <code>ServeMux</code>.</p>
 <h2 id="middleware"><a class="heading-link" href="#middleware" aria-label="Link to Middleware">#</a>Middleware</h2>
-<p>Middleware implements both hooks:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>type MiddlewareInterface interface {
-    Before(http.ResponseWriter, *http.Request) bool
-    After(http.ResponseWriter, *http.Request) bool
-}</code></pre></div>
-<p>Embed <code>core.Middleware</code> to inherit default hooks returning <code>true</code>, then override only what you need:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>type TraceMiddleware struct {
-    core.Middleware
-    Label string
+<p>Middleware uses the standard Go wrapper signature:</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>func(next http.Handler) http.Handler</code></pre></div>
+<p><code>core.Middleware</code> is an alias for this function type. <code>Middlewares</code> accepts plain functions and <code>core.NamedMiddleware</code> values (validated at registration). There are no <code>Before</code>/<code>After</code> methods or boolean continuation values.</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>func Logging(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Printf(&quot;before: %s&quot;, r.URL.Path)
+        defer log.Printf(&quot;after: %s&quot;, r.URL.Path)
+        next.ServeHTTP(w, r)
+    })
 }
 
-func (m TraceMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
-    log.Printf(&quot;%s Before: %s %s&quot;, m.Label, r.Method, r.URL.Path)
-    return true
+router.Middlewares(Logging).Get(&quot;/users&quot;, listUsers)</code></pre></div>
+<p>Call <code>next.ServeHTTP</code> to continue. Return without calling it to reject a request. Middleware controls cleanup with <code>defer</code> and may recover panics around <code>next.ServeHTTP</code>. The router does not recover handler panics or automatically run cleanup hooks.</p>
+<h3 id="passing-context-to-a-handler"><a class="heading-link" href="#passing-context-to-a-handler" aria-label="Link to Passing context to a handler">#</a>Passing context to a handler</h3>
+<p>Use a private key type to avoid context key collisions. This snippet needs <code>import &quot;context&quot;</code>:</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>type userKey struct{}
+
+func DemoGate(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Header.Get(&quot;X-Demo-Key&quot;) != &quot;secret&quot; {
+            http.Error(w, &quot;unauthorized&quot;, http.StatusUnauthorized)
+            return
+        }
+        ctx := context.WithValue(r.Context(), userKey{}, &quot;demo-user&quot;)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
 }
 
-func (m TraceMiddleware) After(w http.ResponseWriter, r *http.Request) bool {
-    log.Printf(&quot;%s After: %s %s&quot;, m.Label, r.Method, r.URL.Path)
-    return true
-}</code></pre></div>
-<h3 id="router-group-and-endpoint-middleware"><a class="heading-link" href="#router-group-and-endpoint-middleware" aria-label="Link to Router, group, and endpoint middleware">#</a>Router, group, and endpoint middleware</h3>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>access := TraceMiddleware{Label: &quot;access&quot;}
-router = router.Middlewares(access)
-
-router.Get(&quot;/health&quot;, healthHandler).ExceptMiddlewares(access)
-router.Get(&quot;/details&quot;, detailsHandler).
-    Middlewares(TraceMiddleware{Label: &quot;details&quot;})
-
-router.Prefix(&quot;/api&quot;).Middlewares(TraceMiddleware{Label: &quot;api&quot;}).Group(func(api *core.Router) {
-    api.Get(&quot;/users&quot;, listUsers) // Runs inherited access + group api middleware.
-})</code></pre></div>
-<p>Both <code>Middlewares</code> and <code>ExceptMiddlewares</code> accept multiple arguments. On a router, these methods return a derived router without changing the receiver; chain the result or save it. An endpoint captures a snapshot when registered; its own middleware methods change only that endpoint.</p>
-<h3 id="exclusions-and-re-enabling"><a class="heading-link" href="#exclusions-and-re-enabling" aria-label="Link to Exclusions and re-enabling">#</a>Exclusions and re-enabling</h3>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>quiet := router.ExceptMiddlewares(access)
-quiet.Get(&quot;/quiet&quot;, quietHandler)
-quiet.Middlewares(access).Get(&quot;/logged&quot;, loggedHandler) // Re-enable in a new scope.
-
-router.Prefix(&quot;/public&quot;).ExceptMiddlewares(access).Group(func(public *core.Router) {
-    public.Get(&quot;/info&quot;, infoHandler)
-    public.Get(&quot;/logged&quot;, loggedHandler).Middlewares(access)
-})</code></pre></div>
-<p>Exclusions are retained as disabled entries, even if that middleware was not previously present. Re-enabling an identity updates its instance without moving its position in the list.</p>
-<h3 id="named-middleware-and-identity"><a class="heading-link" href="#named-middleware-and-identity" aria-label="Link to Named middleware and identity">#</a>Named middleware and identity</h3>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>access := core.NamedMiddleware{
-    Name: &quot;access&quot;,
-    MiddlewareInterface: TraceMiddleware{Label: &quot;access&quot;},
-}
-audit := core.NamedMiddleware{
-    Name: &quot;audit&quot;,
-    MiddlewareInterface: TraceMiddleware{Label: &quot;audit&quot;},
-}
-router = router.Middlewares(access, audit)
-router.Get(&quot;/health&quot;, healthHandler).ExceptMiddlewares(audit)</code></pre></div>
-<p>Use <code>NamedMiddleware</code> values as above when you want explicit identity. Different names create separate entries; the same name updates/re-enables an existing entry. Empty names are invalid. Use distinct names for instances that should run separately.</p>
-<p>Without a name, comparable values use value equality, pointers use pointer identity, and non-comparable values use their concrete type as identity. For a pointer middleware, keep and reuse the same pointer when excluding it. Nil middleware, including typed nil pointers, is rejected with a panic.</p>
-<h3 id="execution-order-rejection-and-panic"><a class="heading-link" href="#execution-order-rejection-and-panic" aria-label="Link to Execution order, rejection, and panic">#</a>Execution order, rejection, and panic</h3>
-<p>For middleware A followed by B:</p>
-<div class="code-block"><div class="code-toolbar"><span>text</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>A.Before → B.Before → handler → B.After → A.After</code></pre></div>
-<p>Return <code>false</code> from <code>Before</code> to stop the request. The middleware must write its own rejection response if one is needed:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>type DemoGate struct { core.Middleware }
-
-func (DemoGate) Before(w http.ResponseWriter, r *http.Request) bool {
-    if r.Header.Get(&quot;X-Demo-Key&quot;) != &quot;secret&quot; {
-        http.Error(w, &quot;send X-Demo-Key: secret&quot;, http.StatusUnauthorized)
-        return false
+router.Middlewares(DemoGate).Get(&quot;/profile&quot;, func(w http.ResponseWriter, r *http.Request) {
+    user, ok := r.Context().Value(userKey{}).(string)
+    if !ok {
+        http.Error(w, &quot;missing user&quot;, http.StatusUnauthorized)
+        return
     }
-    return true
-}</code></pre></div>
-<p>This fixed key is only an example of rejection, not production authentication.</p>
-<p>If B rejects, the sequence is <code>A.Before → B.Before → A.After</code>. B&#x27;s <code>After</code> is not called because B did not pass <code>Before</code>. If <code>Before</code> panics, its own <code>After</code> likewise has not been scheduled.</p>
-<p><code>After</code> runs in reverse order for middleware whose <code>Before</code> returned <code>true</code>, including when downstream code panics. The router does not recover or turn panics into HTTP error responses. With the standard HTTP server, a propagated handler panic is handled by <code>net/http</code>.</p>
-<p><strong>The boolean returned by <code>After</code> is currently ignored.</strong> Returning <code>false</code> does not stop other <code>After</code> hooks. The return type is retained for compatibility. Headers already sent cannot be changed in <code>After</code>.</p>
+    fmt.Fprintln(w, user)
+})</code></pre></div>
+<p>The fixed key is only a demonstration. Real authentication must validate credentials. Wrappers can also forward a modified request or a wrapped <code>http.ResponseWriter</code>, for example to observe status codes or transform responses. A custom writer should preserve any optional HTTP interfaces needed by downstream handlers (such as streaming or hijacking).</p>
+<h3 id="router-group-and-endpoint-middleware"><a class="heading-link" href="#router-group-and-endpoint-middleware" aria-label="Link to Router, group, and endpoint middleware">#</a>Router, group, and endpoint middleware</h3>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router = router.Middlewares(Logging)
+router.Prefix(&quot;/api&quot;).Middlewares(DemoGate).Group(func(api *core.Router) {
+    api.Get(&quot;/users&quot;, listUsers)
+})
+router.Get(&quot;/details&quot;, detailsHandler).Middlewares(Logging)</code></pre></div>
+<p>Router methods return a derived router; chain or save the result. Endpoint middleware methods modify only the registered endpoint. Middleware lists are copied, but captured state remains shared and must be safe for concurrent requests.</p>
+<h3 id="named-middleware-exclusions-and-re-enabling"><a class="heading-link" href="#named-middleware-exclusions-and-re-enabling" aria-label="Link to Named middleware, exclusions, and re-enabling">#</a>Named middleware, exclusions, and re-enabling</h3>
+<p>Functions are not compared by identity. Every unnamed middleware registration appends a new wrapper, even if the same function was already registered. Use names to replace, exclude, or re-enable middleware:</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>access := core.NamedMiddleware{Name: &quot;access&quot;, Middleware: Logging}
+auth := core.NamedMiddleware{Name: &quot;auth&quot;, Middleware: DemoGate}
+router = router.Middlewares(access, auth)
+
+router.Get(&quot;/health&quot;, healthHandler).ExceptMiddlewares(&quot;access&quot;, &quot;auth&quot;)
+router.Prefix(&quot;/public&quot;).ExceptMiddlewares(&quot;auth&quot;).Group(func(public *core.Router) {
+    public.Get(&quot;/info&quot;, infoHandler)
+    public.Get(&quot;/private&quot;, privateHandler).Middlewares(auth)
+})
+
+quiet := router.ExceptMiddlewares(&quot;access&quot;)
+quiet.Get(&quot;/quiet&quot;, quietHandler)
+quiet.Middlewares(access).Get(&quot;/logged&quot;, loggedHandler)</code></pre></div>
+<p>The same name replaces/re-enables an entry in its original position; distinct names are independent. Excluding an unknown name retains a disabled placeholder. Later registration with that name re-enables its slot. Names are scoped to each copied middleware list, not a global registry. Anonymous wrappers cannot be excluded by name.</p>
+<p>Empty names, nil middleware functions, and unsupported values passed to <code>Middlewares</code> panic during configuration. Invalid batches do not partially update an endpoint. Use <code>NamedMiddleware</code> values, not pointers. A separately defined function type can be explicitly converted with <code>core.Middleware(fn)</code>.</p>
+<h3 id="execution-order-and-chain-construction"><a class="heading-link" href="#execution-order-and-chain-construction" aria-label="Link to Execution order and chain construction">#</a>Execution order and chain construction</h3>
+<p>For registration <code>Middlewares(A, B)</code>, requests enter A, then B, then the handler. Code after <code>next.ServeHTTP</code> unwinds in reverse order:</p>
+<div class="code-block"><div class="code-toolbar"><span>text</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>A before → B before → handler → B after → A after</code></pre></div>
+<p>If B rejects, A resumes after its call to B; B&#x27;s own code determines which cleanup runs. Only deferred cleanup is guaranteed during panic unwinding. Code after <code>next.ServeHTTP</code> without <code>defer</code> is skipped when downstream panics.</p>
+<p>Each endpoint builds its chain once, lazily on its first request, after configuration freezes. Constructors run from the last registered middleware to the first. Keep per-request state inside the returned handler, not in the constructor. Constructors must return a non-nil handler. Constructor panics (including nil-handler validation) are cached and repeated on subsequent requests to that endpoint; they are configuration bugs, not request-level rejection.</p>
+<h3 id="migrating-from-before-after-middleware"><a class="heading-link" href="#migrating-from-before-after-middleware" aria-label="Link to Migrating from Before/After middleware">#</a>Migrating from Before/After middleware</h3>
+<p>This is a breaking API change:</p>
+<ul>
+<li>Replace the old struct embedding <code>core.Middleware</code> with a function taking and returning <code>http.Handler</code>.</li>
+<li>Move <code>Before</code> logic before <code>next.ServeHTTP</code>; use <code>return</code> instead of <code>return false</code>.</li>
+<li>Move cleanup from <code>After</code> into a <code>defer</code> inside the request handler.</li>
+<li>Replace <code>NamedMiddleware{MiddlewareInterface: ...}</code> with <code>NamedMiddleware{Middleware: ...}</code>.</li>
+<li>Replace <code>ExceptMiddlewares(instance)</code> with <code>ExceptMiddlewares(&quot;name&quot;)</code>, and register that middleware under the same name first.</li>
+</ul>
 <h2 id="chaining-without-modifying-the-original-router"><a class="heading-link" href="#chaining-without-modifying-the-original-router" aria-label="Link to Chaining without modifying the original router">#</a>Chaining without modifying the original router</h2>
 <p><strong>Breaking change:</strong> router-level <code>Prefix</code>, <code>Middlewares</code>, and <code>ExceptMiddlewares</code> now return a derived router. They never change the receiver&#x27;s prefix or middleware configuration. Use the returned value:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router.Prefix(&quot;/api&quot;).Middlewares(DemoGate{}).Group(func(api *core.Router) {
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router.Prefix(&quot;/api&quot;).Middlewares(DemoGate).Group(func(api *core.Router) {
     api.Get(&quot;/users&quot;, listUsers) // /api/users, with DemoGate.
 })
 router.Get(&quot;/health&quot;, healthHandler) // /health, without DemoGate.
@@ -192,10 +196,10 @@ router.Get(&quot;/user&quot;, getUser) // /user, not /api/user.</code></pre></di
 <p>All derived scopes share the mux, so routes registered through them are served by the original router. Registration itself still changes the shared route table. Endpoint methods (<code>router.Get(...).Middlewares(...)</code> and <code>.ExceptMiddlewares(...)</code>) continue configuring that registered endpoint directly.</p>
 <h2 id="groups-and-prefixes"><a class="heading-link" href="#groups-and-prefixes" aria-label="Link to Groups and prefixes">#</a>Groups and prefixes</h2>
 <p>Groups inherit a snapshot of their parent&#x27;s prefix and middleware list. Nested groups accumulate prefixes:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router.Prefix(&quot;/api&quot;).Middlewares(DemoGate{}).Group(func(api *core.Router) {
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router.Prefix(&quot;/api&quot;).Middlewares(core.NamedMiddleware{Name: &quot;auth&quot;, Middleware: DemoGate}).Group(func(api *core.Router) {
     api.Prefix(&quot;/v1&quot;).Group(func(v1 *core.Router) {
         v1.Get(&quot;/users/{id}&quot;, getUser) // /api/v1/users/{id}
-        v1.Get(&quot;/public&quot;, publicHandler).ExceptMiddlewares(DemoGate{})
+        v1.Get(&quot;/public&quot;, publicHandler).ExceptMiddlewares(&quot;auth&quot;)
     })
 })</code></pre></div>
 <p>Group configuration does not change the parent, and new scopes derived from the parent do not change existing groups. All groups share the underlying mux and configuration freeze state, so conflicts are checked across all registered routes.</p>
@@ -234,7 +238,7 @@ curl -I -H &#x27;X-Demo-Key: secret&#x27; localhost:8000/api/v1/users/42
 curl localhost:8000/api/v1/public
 curl localhost:8000/api/public/info
 curl localhost:8000/custom</code></pre></div>
-<p>The request without the demo key to <code>/api/v1/users/42</code> returns 401. The example logs an intentional duplicate registration error at startup and continues serving. <code>/panic</code> intentionally panics to demonstrate <code>After</code> cleanup; it may produce an empty response/closed connection, not a formatted 500 response. More commands are listed at the top of the example file. Stop the server with <code>Ctrl+C</code>.</p>
+<p>The request without the demo key to <code>/api/v1/users/42</code> returns 401. The example logs an intentional duplicate registration error at startup and continues serving. <code>/panic</code> intentionally panics to demonstrate deferred middleware cleanup; it may produce an empty response/closed connection, not a formatted 500 response. More commands are listed at the top of the example file. Stop the server with <code>Ctrl+C</code>.</p>
 <h2 id="license"><a class="heading-link" href="#license" aria-label="Link to License">#</a>License</h2>
 <p><a href="https://github.com/RasyidHakim-2804/go-core-router/blob/main/LICENSE">MIT</a>.</p></article>
 <footer>Go Core Router · <a href="https://github.com/RasyidHakim-2804/go-core-router/blob/main/LICENSE">MIT License</a><span>Built on net/http.</span></footer></main>

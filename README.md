@@ -9,7 +9,7 @@ A lightweight Go HTTP router with Laravel-inspired route groups, prefixes, and m
 - Path parameters, catch-all wildcards, and exact-root patterns through `ServeMux`.
 - Nested groups with inherited prefixes and middleware configuration.
 - Middleware additions, exclusions, and re-enabling at router, group, and endpoint level.
-- Named middleware instances and `Before`/`After` hooks.
+- Named middleware instances and standard HTTP handler wrappers with context propagation.
 - Direct `http.Handler` compatibility and access to the underlying mux.
 
 ## Installation
@@ -84,7 +84,7 @@ endpoint, err := router.Handle(http.MethodGet, "/status", statusHandler)
 if err != nil {
     log.Fatal(err)
 }
-endpoint.Middlewares(TraceMiddleware{Label: "status"})
+endpoint.Middlewares(Logging)
 ```
 
 `Handle` returns errors for nil handlers, invalid methods, and invalid or conflicting patterns. The convenience helpers panic on these registration errors. Configuration after serving starts also panics, including calls to `Handle`.
@@ -123,121 +123,122 @@ A trailing slash has subtree meaning, so `"/"` alone is a fallback subtree patte
 
 ## Middleware
 
-Middleware implements both hooks:
+Middleware uses the standard Go wrapper signature:
 
 ```go
-type MiddlewareInterface interface {
-    Before(http.ResponseWriter, *http.Request) bool
-    After(http.ResponseWriter, *http.Request) bool
-}
+func(next http.Handler) http.Handler
 ```
 
-Embed `core.Middleware` to inherit default hooks returning `true`, then override only what you need:
+`core.Middleware` is an alias for this function type. `Middlewares` accepts plain functions and `core.NamedMiddleware` values (validated at registration). There are no `Before`/`After` methods or boolean continuation values.
 
 ```go
-type TraceMiddleware struct {
-    core.Middleware
-    Label string
+func Logging(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Printf("before: %s", r.URL.Path)
+        defer log.Printf("after: %s", r.URL.Path)
+        next.ServeHTTP(w, r)
+    })
 }
 
-func (m TraceMiddleware) Before(w http.ResponseWriter, r *http.Request) bool {
-    log.Printf("%s Before: %s %s", m.Label, r.Method, r.URL.Path)
-    return true
-}
-
-func (m TraceMiddleware) After(w http.ResponseWriter, r *http.Request) bool {
-    log.Printf("%s After: %s %s", m.Label, r.Method, r.URL.Path)
-    return true
-}
+router.Middlewares(Logging).Get("/users", listUsers)
 ```
+
+Call `next.ServeHTTP` to continue. Return without calling it to reject a request. Middleware controls cleanup with `defer` and may recover panics around `next.ServeHTTP`. The router does not recover handler panics or automatically run cleanup hooks.
+
+### Passing context to a handler
+
+Use a private key type to avoid context key collisions. This snippet needs `import "context"`:
+
+```go
+type userKey struct{}
+
+func DemoGate(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Header.Get("X-Demo-Key") != "secret" {
+            http.Error(w, "unauthorized", http.StatusUnauthorized)
+            return
+        }
+        ctx := context.WithValue(r.Context(), userKey{}, "demo-user")
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+
+router.Middlewares(DemoGate).Get("/profile", func(w http.ResponseWriter, r *http.Request) {
+    user, ok := r.Context().Value(userKey{}).(string)
+    if !ok {
+        http.Error(w, "missing user", http.StatusUnauthorized)
+        return
+    }
+    fmt.Fprintln(w, user)
+})
+```
+
+The fixed key is only a demonstration. Real authentication must validate credentials. Wrappers can also forward a modified request or a wrapped `http.ResponseWriter`, for example to observe status codes or transform responses. A custom writer should preserve any optional HTTP interfaces needed by downstream handlers (such as streaming or hijacking).
 
 ### Router, group, and endpoint middleware
 
 ```go
-access := TraceMiddleware{Label: "access"}
-router = router.Middlewares(access)
-
-router.Get("/health", healthHandler).ExceptMiddlewares(access)
-router.Get("/details", detailsHandler).
-    Middlewares(TraceMiddleware{Label: "details"})
-
-router.Prefix("/api").Middlewares(TraceMiddleware{Label: "api"}).Group(func(api *core.Router) {
-    api.Get("/users", listUsers) // Runs inherited access + group api middleware.
+router = router.Middlewares(Logging)
+router.Prefix("/api").Middlewares(DemoGate).Group(func(api *core.Router) {
+    api.Get("/users", listUsers)
 })
+router.Get("/details", detailsHandler).Middlewares(Logging)
 ```
 
-Both `Middlewares` and `ExceptMiddlewares` accept multiple arguments. On a router, these methods return a derived router without changing the receiver; chain the result or save it. An endpoint captures a snapshot when registered; its own middleware methods change only that endpoint.
+Router methods return a derived router; chain or save the result. Endpoint middleware methods modify only the registered endpoint. Middleware lists are copied, but captured state remains shared and must be safe for concurrent requests.
 
-### Exclusions and re-enabling
+### Named middleware, exclusions, and re-enabling
+
+Functions are not compared by identity. Every unnamed middleware registration appends a new wrapper, even if the same function was already registered. Use names to replace, exclude, or re-enable middleware:
 
 ```go
-quiet := router.ExceptMiddlewares(access)
-quiet.Get("/quiet", quietHandler)
-quiet.Middlewares(access).Get("/logged", loggedHandler) // Re-enable in a new scope.
+access := core.NamedMiddleware{Name: "access", Middleware: Logging}
+auth := core.NamedMiddleware{Name: "auth", Middleware: DemoGate}
+router = router.Middlewares(access, auth)
 
-router.Prefix("/public").ExceptMiddlewares(access).Group(func(public *core.Router) {
+router.Get("/health", healthHandler).ExceptMiddlewares("access", "auth")
+router.Prefix("/public").ExceptMiddlewares("auth").Group(func(public *core.Router) {
     public.Get("/info", infoHandler)
-    public.Get("/logged", loggedHandler).Middlewares(access)
+    public.Get("/private", privateHandler).Middlewares(auth)
 })
+
+quiet := router.ExceptMiddlewares("access")
+quiet.Get("/quiet", quietHandler)
+quiet.Middlewares(access).Get("/logged", loggedHandler)
 ```
 
-Exclusions are retained as disabled entries, even if that middleware was not previously present. Re-enabling an identity updates its instance without moving its position in the list.
+The same name replaces/re-enables an entry in its original position; distinct names are independent. Excluding an unknown name retains a disabled placeholder. Later registration with that name re-enables its slot. Names are scoped to each copied middleware list, not a global registry. Anonymous wrappers cannot be excluded by name.
 
-### Named middleware and identity
+Empty names, nil middleware functions, and unsupported values passed to `Middlewares` panic during configuration. Invalid batches do not partially update an endpoint. Use `NamedMiddleware` values, not pointers. A separately defined function type can be explicitly converted with `core.Middleware(fn)`.
 
-```go
-access := core.NamedMiddleware{
-    Name: "access",
-    MiddlewareInterface: TraceMiddleware{Label: "access"},
-}
-audit := core.NamedMiddleware{
-    Name: "audit",
-    MiddlewareInterface: TraceMiddleware{Label: "audit"},
-}
-router = router.Middlewares(access, audit)
-router.Get("/health", healthHandler).ExceptMiddlewares(audit)
-```
+### Execution order and chain construction
 
-Use `NamedMiddleware` values as above when you want explicit identity. Different names create separate entries; the same name updates/re-enables an existing entry. Empty names are invalid. Use distinct names for instances that should run separately.
-
-Without a name, comparable values use value equality, pointers use pointer identity, and non-comparable values use their concrete type as identity. For a pointer middleware, keep and reuse the same pointer when excluding it. Nil middleware, including typed nil pointers, is rejected with a panic.
-
-### Execution order, rejection, and panic
-
-For middleware A followed by B:
+For registration `Middlewares(A, B)`, requests enter A, then B, then the handler. Code after `next.ServeHTTP` unwinds in reverse order:
 
 ```text
-A.Before → B.Before → handler → B.After → A.After
+A before → B before → handler → B after → A after
 ```
 
-Return `false` from `Before` to stop the request. The middleware must write its own rejection response if one is needed:
+If B rejects, A resumes after its call to B; B's own code determines which cleanup runs. Only deferred cleanup is guaranteed during panic unwinding. Code after `next.ServeHTTP` without `defer` is skipped when downstream panics.
 
-```go
-type DemoGate struct { core.Middleware }
+Each endpoint builds its chain once, lazily on its first request, after configuration freezes. Constructors run from the last registered middleware to the first. Keep per-request state inside the returned handler, not in the constructor. Constructors must return a non-nil handler. Constructor panics (including nil-handler validation) are cached and repeated on subsequent requests to that endpoint; they are configuration bugs, not request-level rejection.
 
-func (DemoGate) Before(w http.ResponseWriter, r *http.Request) bool {
-    if r.Header.Get("X-Demo-Key") != "secret" {
-        http.Error(w, "send X-Demo-Key: secret", http.StatusUnauthorized)
-        return false
-    }
-    return true
-}
-```
+### Migrating from Before/After middleware
 
-This fixed key is only an example of rejection, not production authentication.
+This is a breaking API change:
 
-If B rejects, the sequence is `A.Before → B.Before → A.After`. B's `After` is not called because B did not pass `Before`. If `Before` panics, its own `After` likewise has not been scheduled.
-
-`After` runs in reverse order for middleware whose `Before` returned `true`, including when downstream code panics. The router does not recover or turn panics into HTTP error responses. With the standard HTTP server, a propagated handler panic is handled by `net/http`.
-
-**The boolean returned by `After` is currently ignored.** Returning `false` does not stop other `After` hooks. The return type is retained for compatibility. Headers already sent cannot be changed in `After`.
+- Replace the old struct embedding `core.Middleware` with a function taking and returning `http.Handler`.
+- Move `Before` logic before `next.ServeHTTP`; use `return` instead of `return false`.
+- Move cleanup from `After` into a `defer` inside the request handler.
+- Replace `NamedMiddleware{MiddlewareInterface: ...}` with `NamedMiddleware{Middleware: ...}`.
+- Replace `ExceptMiddlewares(instance)` with `ExceptMiddlewares("name")`, and register that middleware under the same name first.
 
 ## Chaining without modifying the original router
 
 **Breaking change:** router-level `Prefix`, `Middlewares`, and `ExceptMiddlewares` now return a derived router. They never change the receiver's prefix or middleware configuration. Use the returned value:
 
 ```go
-router.Prefix("/api").Middlewares(DemoGate{}).Group(func(api *core.Router) {
+router.Prefix("/api").Middlewares(DemoGate).Group(func(api *core.Router) {
     api.Get("/users", listUsers) // /api/users, with DemoGate.
 })
 router.Get("/health", healthHandler) // /health, without DemoGate.
@@ -263,10 +264,10 @@ All derived scopes share the mux, so routes registered through them are served b
 Groups inherit a snapshot of their parent's prefix and middleware list. Nested groups accumulate prefixes:
 
 ```go
-router.Prefix("/api").Middlewares(DemoGate{}).Group(func(api *core.Router) {
+router.Prefix("/api").Middlewares(core.NamedMiddleware{Name: "auth", Middleware: DemoGate}).Group(func(api *core.Router) {
     api.Prefix("/v1").Group(func(v1 *core.Router) {
         v1.Get("/users/{id}", getUser) // /api/v1/users/{id}
-        v1.Get("/public", publicHandler).ExceptMiddlewares(DemoGate{})
+        v1.Get("/public", publicHandler).ExceptMiddlewares("auth")
     })
 })
 ```
@@ -333,7 +334,7 @@ curl localhost:8000/api/public/info
 curl localhost:8000/custom
 ```
 
-The request without the demo key to `/api/v1/users/42` returns 401. The example logs an intentional duplicate registration error at startup and continues serving. `/panic` intentionally panics to demonstrate `After` cleanup; it may produce an empty response/closed connection, not a formatted 500 response. More commands are listed at the top of the example file. Stop the server with `Ctrl+C`.
+The request without the demo key to `/api/v1/users/42` returns 401. The example logs an intentional duplicate registration error at startup and continues serving. `/panic` intentionally panics to demonstrate deferred middleware cleanup; it may produce an empty response/closed connection, not a formatted 500 response. More commands are listed at the top of the example file. Stop the server with `Ctrl+C`.
 
 ## License
 

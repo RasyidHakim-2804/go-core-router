@@ -7,25 +7,17 @@ import (
 	"testing"
 )
 
-type probe struct {
-	Middleware
-	log    *[]string
-	name   string
-	reject bool
-}
-
-func (p *probe) Before(http.ResponseWriter, *http.Request) bool {
-	*p.log = append(*p.log, p.name+" before")
-	return !p.reject
-}
-func (p *probe) After(http.ResponseWriter, *http.Request) bool {
-	*p.log = append(*p.log, p.name+" after")
-	return false
-}
-
-type sliceMiddleware struct {
-	Middleware
-	Values []string
+func probe(log *[]string, name string, reject bool) NamedMiddleware {
+	return NamedMiddleware{Name: name, Middleware: func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*log = append(*log, name+" before")
+			if reject {
+				return
+			}
+			defer func() { *log = append(*log, name+" after") }()
+			next.ServeHTTP(w, r)
+		})
+	}}
 }
 
 func TestLifecycle(t *testing.T) {
@@ -33,7 +25,7 @@ func TestLifecycle(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			var log []string
 			r := NewRouter()
-			r = r.Middlewares(&probe{log: &log, name: "a"}, &probe{log: &log, name: "b", reject: mode == "reject"})
+			r = r.Middlewares(probe(&log, "a", false), probe(&log, "b", mode == "reject"))
 			r.Get("/", func(http.ResponseWriter, *http.Request) {
 				log = append(log, "handler")
 				if mode == "panic" {
@@ -60,8 +52,8 @@ func TestLifecycle(t *testing.T) {
 }
 func TestRegistration(t *testing.T) {
 	r := NewRouter()
-	m := sliceMiddleware{Values: []string{"x"}}
-	r = r.Middlewares(m).ExceptMiddlewares(m).Middlewares(m)
+	m := NamedMiddleware{Name: "m", Middleware: func(next http.Handler) http.Handler { return next }}
+	r = r.Middlewares(m).ExceptMiddlewares("m").Middlewares(m)
 	r.Group(func(g *Router) {
 		g = g.Prefix("api/")
 		g.Get("/users", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(201) })
@@ -87,17 +79,17 @@ func TestRegistration(t *testing.T) {
 
 func TestDerivedRouterIsolation(t *testing.T) {
 	var events []string
-	a := &probe{log: &events, name: "a"}
-	b := &probe{log: &events, name: "b"}
+	a := probe(&events, "a", false)
+	b := probe(&events, "b", false)
 	root := NewRouter()
 	base := root.Middlewares(a)
-	api := base.Prefix("/api").Middlewares(b).ExceptMiddlewares(a)
+	api := base.Prefix("/api").Middlewares(b).ExceptMiddlewares("a")
 	sibling := base.Prefix("/other")
 	handle := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }
 	// Ignoring a returned scope must have no effect on the receiver.
 	root.Prefix("/ignored")
 	root.Middlewares(b)
-	base.ExceptMiddlewares(a)
+	base.ExceptMiddlewares("a")
 	root.Get("/user", handle)
 	base.Get("/base", handle)
 	api.Group(func(g *Router) {

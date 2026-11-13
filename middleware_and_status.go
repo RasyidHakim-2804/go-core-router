@@ -1,54 +1,65 @@
 package core
 
-import "reflect"
+import "fmt"
 
-type MiddlewareAndStatus struct {
-	Middleware MiddlewareInterface
-	status     bool
+type middlewareEntry struct {
+	name    string
+	wrap    Middleware
+	enabled bool
 }
 
-// NamedMiddleware provides stable identity, including for non-comparable values.
-// Use distinct names to register multiple instances of the same middleware type.
-type NamedMiddleware struct {
-	MiddlewareInterface
-	Name string
-}
-
-func middlewareKey(m MiddlewareInterface) any {
-	if m == nil {
-		panic("core: nil middleware")
-	}
-	v := reflect.ValueOf(m)
-	switch v.Kind() {
-	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Interface, reflect.Chan:
-		if v.IsNil() {
+// Anonymous functions always append. Functions cannot be safely identified by
+// code pointer: closures with different captured values can share that pointer.
+func addMiddlewares(entries []middlewareEntry, values []any) []middlewareEntry {
+	for _, value := range values {
+		entry := middlewareEntry{enabled: true}
+		switch m := value.(type) {
+		case Middleware:
+			entry.wrap = m
+		case NamedMiddleware:
+			if m.Name == "" {
+				panic("core: empty middleware name")
+			}
+			entry.name, entry.wrap = m.Name, m.Middleware
+		default:
+			panic(fmt.Sprintf("core: expected middleware function or NamedMiddleware, got %T", value))
+		}
+		if entry.wrap == nil {
 			panic("core: nil middleware")
 		}
-	}
-	if named, ok := m.(NamedMiddleware); ok {
-		if named.Name == "" {
-			panic("core: empty middleware name")
+		replaced := false
+		if entry.name != "" {
+			for i := range entries {
+				if entries[i].name == entry.name {
+					entries[i] = entry
+					replaced = true
+					break
+				}
+			}
 		}
-		middlewareKey(named.MiddlewareInterface)
-		return named.Name
+		if !replaced {
+			entries = append(entries, entry)
+		}
 	}
-	if v.Comparable() {
-		return m
-	}
-	// Non-comparable values use their type as identity; names distinguish instances.
-	return v.Type()
+	return entries
 }
 
-func generateSliceMiddlewareAndStatus(entries []MiddlewareAndStatus, middleware MiddlewareInterface, status bool) []MiddlewareAndStatus {
-	key := middlewareKey(middleware)
-	for i := range entries {
-		if middlewareKey(entries[i].Middleware) == key {
-			entries[i].status = status
-			if status {
-				entries[i].Middleware = middleware
+func excludeMiddlewares(entries []middlewareEntry, names []string) []middlewareEntry {
+	for _, name := range names {
+		if name == "" {
+			panic("core: empty middleware exclusion name")
+		}
+		found := false
+		for i := range entries {
+			if entries[i].name == name {
+				entries[i].enabled = false
+				found = true
+				break
 			}
-			return entries
+		}
+		if !found {
+			entries = append(entries, middlewareEntry{name: name})
 		}
 	}
-	return append(entries, MiddlewareAndStatus{middleware, status})
+	return entries
 }

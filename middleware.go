@@ -1,21 +1,14 @@
 package core
 
-import (
-	"net/http"
-)
+import "net/http"
 
-type MiddlewareInterface interface {
-	Before(w http.ResponseWriter, r *http.Request) bool
-	After(w http.ResponseWriter, r *http.Request) bool
-}
+// Middleware wraps the next HTTP handler. Call next.ServeHTTP to continue,
+// or return without calling next to reject the request. Use defer for cleanup.
+type Middleware = func(http.Handler) http.Handler
 
-type Middleware struct {
-}
-
-func (m Middleware) Before(w http.ResponseWriter, r *http.Request) bool {
-	return true
-}
-
-func (m Middleware) After(w http.ResponseWriter, r *http.Request) bool {
-	return true
+// NamedMiddleware gives a middleware stable identity for exclusion/replacement.
+// Use values of this type in Middlewares; exclude them by Name.
+type NamedMiddleware struct {
+	Name       string
+	Middleware Middleware
 }

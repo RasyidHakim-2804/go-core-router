@@ -23,7 +23,7 @@ func (c *configuration) edit() {
 
 type Router struct {
 	config      *configuration
-	middlewares []MiddlewareAndStatus
+	middlewares []middlewareEntry
 	prefix      string
 	mux         *http.ServeMux
 }
@@ -34,17 +34,18 @@ type Router struct {
 // Middleware instances and the mux remain shared.
 func (router *Router) clone() *Router {
 	return &Router{config: router.config, mux: router.mux, prefix: router.prefix,
-		middlewares: append([]MiddlewareAndStatus(nil), router.middlewares...)}
+		middlewares: append([]middlewareEntry(nil), router.middlewares...)}
 }
 
 func (router *Router) newRequestHandler(handler *Handler) *RequestHandler {
 	newRequestHandler := &RequestHandler{
 		handler:     *handler,
 		config:      router.config,
-		middlewares: make([]MiddlewareAndStatus, len(router.middlewares)),
+		middlewares: make([]middlewareEntry, len(router.middlewares)),
 	}
 
 	copy(newRequestHandler.middlewares, router.middlewares)
+	newRequestHandler.compiled = sync.OnceValue(newRequestHandler.buildChain)
 	return newRequestHandler
 }
 
@@ -72,37 +73,23 @@ func (router *Router) GetMux() *http.ServeMux {
 	return router.mux
 }
 
-// Middlewares returns a derived router with middleware enabled; the receiver is unchanged.
-func (router *Router) Middlewares(middlewares ...MiddlewareInterface) *Router {
+// Middlewares returns a derived router with middleware added/enabled.
+// Accepts func(http.Handler) http.Handler and NamedMiddleware values.
+// Anonymous functions append; named entries replace by name in the same position.
+func (router *Router) Middlewares(middlewares ...any) *Router {
 	router.config.edit()
 	defer router.config.mu.Unlock()
 	derived := router.clone()
-
-	for _, middleware := range middlewares {
-		derived.middlewares = generateSliceMiddlewareAndStatus(
-			derived.middlewares,
-			middleware,
-			true,
-		)
-	}
-
+	derived.middlewares = addMiddlewares(derived.middlewares, middlewares)
 	return derived
 }
 
-// ExceptMiddlewares returns a derived router with middleware disabled; the receiver is unchanged.
-func (router *Router) ExceptMiddlewares(exceptMiddlewares ...MiddlewareInterface) *Router {
+// ExceptMiddlewares returns a derived router with the given names disabled.
+func (router *Router) ExceptMiddlewares(names ...string) *Router {
 	router.config.edit()
 	defer router.config.mu.Unlock()
 	derived := router.clone()
-
-	for _, middleware := range exceptMiddlewares {
-		derived.middlewares = generateSliceMiddlewareAndStatus(
-			derived.middlewares,
-			middleware,
-			false,
-		)
-	}
-
+	derived.middlewares = excludeMiddlewares(derived.middlewares, names)
 	return derived
 }
 
