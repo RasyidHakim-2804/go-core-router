@@ -7,9 +7,12 @@
 <aside id="sidebar"><a class="brand" href="#content"><span class="brand-icon">↳</span><span>Go Core Router<small>DOCUMENTATION</small></span></a>
 <div class="version"><span class="dot"></span> Go 1.23.1+ <span>MIT licensed</span></div>
 <label class="search-label" for="search">Find a topic</label><input id="search" type="search" placeholder="Filter topics…" autocomplete="off">
-<nav aria-label="Documentation"><a class="level-2" href="#features">Features</a>
+<nav aria-label="Documentation"><a class="level-2" href="#why-use-this-router">Why use this router?</a>
+<a class="level-2" href="#features">Features</a>
+<a class="level-2" href="#contents">Contents</a>
 <a class="level-2" href="#installation">Installation</a>
 <a class="level-2" href="#quick-start">Quick start</a>
+<a class="level-2" href="#router-scopes-and-chaining">Router scopes and chaining</a>
 <a class="level-2" href="#registering-routes">Registering routes</a>
 <a class="level-2" href="#path-parameters-and-wildcards">Path parameters and wildcards</a>
 <a class="level-3" href="#one-path-segment">One path segment</a>
@@ -21,8 +24,6 @@
 <a class="level-3" href="#grouping-middleware-for-several-endpoints">Grouping middleware for several endpoints</a>
 <a class="level-3" href="#named-middleware-exclusions-and-re-enabling">Named middleware, exclusions, and re-enabling</a>
 <a class="level-3" href="#execution-order-and-chain-construction">Execution order and chain construction</a>
-<a class="level-3" href="#migrating-from-before-after-middleware">Migrating from Before/After middleware</a>
-<a class="level-2" href="#chaining-without-modifying-the-original-router">Immutable chaining</a>
 <a class="level-2" href="#groups-and-prefixes">Groups and prefixes</a>
 <a class="level-2" href="#serving-and-configuration-lifecycle">Serving &amp; lifecycle</a>
 <a class="level-2" href="#running-the-complete-example">Example application</a>
@@ -30,6 +31,8 @@
 <a class="repository" href="https://github.com/RasyidHakim-2804/go-core-router">View on GitHub <span>↗</span></a></aside>
 <main id="content" tabindex="-1"><div class="topline"><span>THE GO ROUTING LIBRARY</span><div class="top-actions"><button id="theme-toggle" class="theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false">Dark mode</button><a href="https://github.com/RasyidHakim-2804/go-core-router">Source code ↗</a></div></div><article><div class="eyebrow">DOCUMENTATION / OVERVIEW</div><h1>Go Core Router</h1>
 <p>A lightweight Go HTTP router with Laravel-inspired route groups, prefixes, and middleware configuration. It builds on <code>net/http.ServeMux</code> and uses standard <code>http.ResponseWriter</code> and <code>*http.Request</code> handlers.</p>
+<h2 id="why-use-this-router"><a class="heading-link" href="#why-use-this-router" aria-label="Link to Why use this router?">#</a>Why use this router?</h2>
+<p>Go&#x27;s <code>http.ServeMux</code> already handles method and path matching, including wildcards. This library keeps that standard router and adds a fluent way to derive route scopes with prefixes and middleware. It is useful when you want grouped route configuration while keeping ordinary <code>net/http</code> handlers. If you only need method/path matching, plain <code>ServeMux</code> may be enough; this package does not aim to replace full web frameworks.</p>
 <h2 id="features"><a class="heading-link" href="#features" aria-label="Link to Features">#</a>Features</h2>
 <ul>
 <li>Helpers for <code>GET</code>, <code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code>, <code>HEAD</code>, and <code>OPTIONS</code>.</li>
@@ -39,6 +42,19 @@
 <li>Middleware additions, exclusions, and re-enabling at router, group, and endpoint level.</li>
 <li>Named middleware instances and standard HTTP handler wrappers with context propagation.</li>
 <li>Direct <code>http.Handler</code> compatibility and access to the underlying mux.</li>
+</ul>
+<h2 id="contents"><a class="heading-link" href="#contents" aria-label="Link to Contents">#</a>Contents</h2>
+<ul>
+<li><a href="#why-use-this-router">Why use this router?</a></li>
+<li><a href="#installation">Installation and quick start</a></li>
+<li><a href="#router-scopes-and-chaining">Router scopes and chaining</a></li>
+<li><a href="#registering-routes">Registering routes</a></li>
+<li><a href="#path-parameters-and-wildcards">Path parameters and wildcards</a></li>
+<li><a href="#middleware">Middleware</a></li>
+<li><a href="#groups-and-prefixes">Groups and prefixes</a></li>
+<li><a href="#serving-and-configuration-lifecycle">Serving and configuration lifecycle</a></li>
+<li><a href="#running-the-complete-example">Complete example</a></li>
+<li><a href="#license">License</a></li>
 </ul>
 <h2 id="installation"><a class="heading-link" href="#installation" aria-label="Link to Installation">#</a>Installation</h2>
 <p>Requires Go <strong>1.23.1 or newer</strong>, as declared in <code>go.mod</code>.</p>
@@ -66,7 +82,17 @@ func main() {
     log.Fatal(http.ListenAndServe(&quot;:8000&quot;, router))
 }</code></pre></div>
 <p>Run <code>go run .</code>, then open <code>http://localhost:8000/hello</code>.</p>
-<p>The snippets below are configuration examples to place before starting the server. Handler names such as <code>listUsers</code> represent functions supplied by your application.</p>
+<p>The snippets below show configuration to complete before starting the server. Handler names such as <code>listUsers</code> represent functions supplied by your application.</p>
+<h2 id="router-scopes-and-chaining"><a class="heading-link" href="#router-scopes-and-chaining" aria-label="Link to Router scopes and chaining">#</a>Router scopes and chaining</h2>
+<p><code>Prefix</code>, <code>Middlewares</code>, and <code>ExceptMiddlewares</code> return a <strong>derived router</strong> with copied prefix and middleware configuration. They do not change the router they were called on. Use the returned router by continuing the chain or assigning it to a variable:</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>api := router.Prefix(&quot;/api&quot;).Middlewares(Logging)
+api.Get(&quot;/users&quot;, listUsers) // /api/users; Logging runs first.
+
+router.Get(&quot;/health&quot;, healthHandler) // /health; the original router is unchanged.</code></pre></div>
+<p>Discarding the return value discards that configuration:</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router.Prefix(&quot;/api&quot;)
+router.Get(&quot;/users&quot;, listUsers) // /users, not /api/users.</code></pre></div>
+<p>Derived routers and groups share the same route table, so routes registered through any scope are served by the original router. Middleware lists are copied, but middleware functions may close over shared state. Make mutable captured state safe for concurrent requests.</p>
 <h2 id="registering-routes"><a class="heading-link" href="#registering-routes" aria-label="Link to Registering routes">#</a>Registering routes</h2>
 <p>Handlers have this signature; <code>core.Handler</code> is an alias for the same function type:</p>
 <div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>func handler(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +133,7 @@ router.Get(&quot;/docs/{$}&quot;, indexHandler) // Only /docs/; more specific th
 <h2 id="middleware"><a class="heading-link" href="#middleware" aria-label="Link to Middleware">#</a>Middleware</h2>
 <p>Middleware uses the standard Go wrapper signature:</p>
 <div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>func(next http.Handler) http.Handler</code></pre></div>
-<p><code>core.Middleware</code> is an alias for this function type. <code>Middlewares</code> accepts plain functions and <code>core.NamedMiddleware</code> values (validated at registration). There are no <code>Before</code>/<code>After</code> methods or boolean continuation values.</p>
+<p><code>core.Middleware</code> is an alias for this function type. <code>Middlewares</code> accepts plain functions and <code>core.NamedMiddleware</code> values. Unsupported values and nil middleware are rejected with a panic during configuration.</p>
 <div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>func Logging(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         log.Printf(&quot;before: %s&quot;, r.URL.Path)
@@ -143,30 +169,30 @@ router.Middlewares(DemoGate).Get(&quot;/profile&quot;, func(w http.ResponseWrite
 })</code></pre></div>
 <p>The fixed key is only a demonstration. Real authentication must validate credentials. Wrappers can also forward a modified request or a wrapped <code>http.ResponseWriter</code>, for example to observe status codes or transform responses. A custom writer should preserve any optional HTTP interfaces needed by downstream handlers (such as streaming or hijacking).</p>
 <h3 id="router-group-and-endpoint-middleware"><a class="heading-link" href="#router-group-and-endpoint-middleware" aria-label="Link to Router, group, and endpoint middleware">#</a>Router, group, and endpoint middleware</h3>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router = router.Middlewares(Logging)
-router.Prefix(&quot;/api&quot;).Middlewares(DemoGate).Group(func(api *core.Router) {
-    api.Get(&quot;/users&quot;, listUsers)
-})
-router.Get(&quot;/details&quot;, detailsHandler).Middlewares(Logging)</code></pre></div>
-<p>Router methods return a derived router; chain or save the result. Endpoint middleware methods modify only the registered endpoint. Middleware lists are copied, but captured state remains shared and must be safe for concurrent requests.</p>
-<h3 id="grouping-middleware-for-several-endpoints"><a class="heading-link" href="#grouping-middleware-for-several-endpoints" aria-label="Link to Grouping middleware for several endpoints">#</a>Grouping middleware for several endpoints</h3>
-<p>Need several middleware on multiple endpoints? Create a derived router scope with the shared middleware, then register its routes there. Add or exclude middleware on a narrower scope or individual endpoint as needed:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>api := router.Prefix(&quot;/api&quot;).Middlewares(Logging, auth, Metrics)
+<p><code>Middlewares</code> accepts one or more middleware functions or <code>core.NamedMiddleware</code> values. It uses <code>...any</code> to accept both forms, so unsupported values are rejected with a panic at configuration time rather than by the compiler. A separately defined named function type may need explicit conversion to <code>core.Middleware</code>.</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>api := router.Middlewares(Logging, RequestMetrics)
+api.Get(&quot;/users&quot;, listUsers) // Logging, then RequestMetrics, then handler.
 
-api.Get(&quot;/users&quot;, listUsers) // Logging + auth + Metrics.
+router.Get(&quot;/details&quot;, detailsHandler).Middlewares(Logging) // Endpoint only.</code></pre></div>
+<p>Router middleware methods return derived routers. Endpoint middleware methods modify the endpoint returned by <code>Get</code>, <code>Post</code>, or <code>Handle</code>.</p>
+<h3 id="grouping-middleware-for-several-endpoints"><a class="heading-link" href="#grouping-middleware-for-several-endpoints" aria-label="Link to Grouping middleware for several endpoints">#</a>Grouping middleware for several endpoints</h3>
+<p>Create a derived router scope with middleware shared by several routes. Here <code>RequestMetrics</code> and <code>RateLimit</code> are middleware functions supplied by the application. Then add middleware or exclude named middleware on a narrower scope or endpoint:</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>auth := core.NamedMiddleware{Name: &quot;auth&quot;, Middleware: DemoGate}
+metrics := core.NamedMiddleware{Name: &quot;metrics&quot;, Middleware: RequestMetrics}
+
+api := router.Prefix(&quot;/api&quot;).Middlewares(Logging, auth, metrics)
+api.Get(&quot;/users&quot;, listUsers) // Logging + auth + metrics.
 api.Get(&quot;/health&quot;, healthHandler).ExceptMiddlewares(&quot;auth&quot;)
 
-// This subgroup inherits the api middleware, adds rate limiting,
-// and removes Metrics for every route in that subgroup.
-api.Prefix(&quot;/admin&quot;).Middlewares(RateLimit).
-    ExceptMiddlewares(&quot;metrics&quot;).Group(func(admin *core.Router) {
-        admin.Get(&quot;/reports&quot;, reportsHandler)
-        admin.Get(&quot;/status&quot;, adminStatusHandler).ExceptMiddlewares(&quot;auth&quot;)
-    })
+// This subgroup inherits api&#x27;s middleware, adds rate limiting,
+// and excludes metrics for every endpoint in the subgroup.
+admin := api.Prefix(&quot;/admin&quot;).Middlewares(RateLimit).ExceptMiddlewares(&quot;metrics&quot;)
+admin.Get(&quot;/reports&quot;, reportsHandler) // Logging + auth + RateLimit.
+admin.Get(&quot;/status&quot;, adminStatusHandler).ExceptMiddlewares(&quot;auth&quot;)
 
-// api and router remain unchanged by the derived scopes above.
-api.Get(&quot;/settings&quot;, settingsHandler) // Still Logging + auth + Metrics.</code></pre></div>
-<p>Use <code>NamedMiddleware</code> for middleware that must be excluded by name, such as <code>auth</code> and <code>metrics</code> above. Unnamed middleware such as <code>Logging</code> and <code>RateLimit</code> can be added to a scope, but cannot be selected for exclusion. The same applies when adding middleware directly to an endpoint: <code>.Middlewares(...)</code> adds wrappers, and <code>.ExceptMiddlewares(...)</code> disables named entries inherited by that endpoint.</p>
+// Creating admin did not change api.
+api.Get(&quot;/settings&quot;, settingsHandler) // Still Logging + auth + metrics.</code></pre></div>
+<p>Middleware that needs to be excluded must be registered as <code>NamedMiddleware</code>, then excluded by its name. Unnamed middleware such as <code>Logging</code> or <code>RateLimit</code> can be added but cannot be selected for exclusion.</p>
 <h3 id="named-middleware-exclusions-and-re-enabling"><a class="heading-link" href="#named-middleware-exclusions-and-re-enabling" aria-label="Link to Named middleware, exclusions, and re-enabling">#</a>Named middleware, exclusions, and re-enabling</h3>
 <p>Functions are not compared by identity. Every unnamed middleware registration appends a new wrapper, even if the same function was already registered. A name lets you replace, exclude, or re-enable a specific middleware instance. This matters when one factory creates middleware with different configuration:</p>
 <div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>func LoggingWithLevel(level string) core.Middleware {
@@ -203,47 +229,24 @@ quiet := router.ExceptMiddlewares(&quot;auth&quot;)
 quiet.Get(&quot;/quiet&quot;, quietHandler)
 quiet.Middlewares(auth).Get(&quot;/logged&quot;, loggedHandler) // Re-enable in a derived scope.</code></pre></div>
 <p>The same name replaces/re-enables an entry in its original position; distinct names are independent. Excluding an unknown name retains a disabled placeholder. Later registration with that name re-enables its slot. Names are scoped to each copied middleware list, not a global registry. Anonymous wrappers cannot be excluded by name.</p>
-<p>Empty names, nil middleware functions, and unsupported values passed to <code>Middlewares</code> panic during configuration. Invalid batches do not partially update an endpoint. Use <code>NamedMiddleware</code> values, not pointers. A separately defined function type can be explicitly converted with <code>core.Middleware(fn)</code>.</p>
+<p>Names must be non-empty. Nil functions and unsupported values passed to <code>Middlewares</code> panic during configuration. Invalid batches do not partially update an endpoint. Use <code>NamedMiddleware</code> values, not pointers. A separately defined function type can be explicitly converted with <code>core.Middleware(fn)</code>.</p>
 <h3 id="execution-order-and-chain-construction"><a class="heading-link" href="#execution-order-and-chain-construction" aria-label="Link to Execution order and chain construction">#</a>Execution order and chain construction</h3>
 <p>For registration <code>Middlewares(A, B)</code>, requests enter A, then B, then the handler. Code after <code>next.ServeHTTP</code> unwinds in reverse order:</p>
 <div class="code-block"><div class="code-toolbar"><span>text</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>A before → B before → handler → B after → A after</code></pre></div>
 <p>If B rejects, A resumes after its call to B; B&#x27;s own code determines which cleanup runs. Only deferred cleanup is guaranteed during panic unwinding. Code after <code>next.ServeHTTP</code> without <code>defer</code> is skipped when downstream panics.</p>
 <p>Each endpoint builds its chain once, lazily on its first request, after configuration freezes. Constructors run from the last registered middleware to the first. Keep per-request state inside the returned handler, not in the constructor. Constructors must return a non-nil handler. Constructor panics (including nil-handler validation) are cached and repeated on subsequent requests to that endpoint; they are configuration bugs, not request-level rejection.</p>
-<h3 id="migrating-from-before-after-middleware"><a class="heading-link" href="#migrating-from-before-after-middleware" aria-label="Link to Migrating from Before/After middleware">#</a>Migrating from Before/After middleware</h3>
-<p>This is a breaking API change:</p>
-<ul>
-<li>Replace the old struct embedding <code>core.Middleware</code> with a function taking and returning <code>http.Handler</code>.</li>
-<li>Move <code>Before</code> logic before <code>next.ServeHTTP</code>; use <code>return</code> instead of <code>return false</code>.</li>
-<li>Move cleanup from <code>After</code> into a <code>defer</code> inside the request handler.</li>
-<li>Replace <code>NamedMiddleware{MiddlewareInterface: ...}</code> with <code>NamedMiddleware{Middleware: ...}</code>.</li>
-<li>Replace <code>ExceptMiddlewares(instance)</code> with <code>ExceptMiddlewares(&quot;name&quot;)</code>, and register that middleware under the same name first.</li>
-</ul>
-<h2 id="chaining-without-modifying-the-original-router"><a class="heading-link" href="#chaining-without-modifying-the-original-router" aria-label="Link to Chaining without modifying the original router">#</a>Chaining without modifying the original router</h2>
-<p><strong>Breaking change:</strong> router-level <code>Prefix</code>, <code>Middlewares</code>, and <code>ExceptMiddlewares</code> now return a derived router. They never change the receiver&#x27;s prefix or middleware configuration. Use the returned value:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router.Prefix(&quot;/api&quot;).Middlewares(DemoGate).Group(func(api *core.Router) {
-    api.Get(&quot;/users&quot;, listUsers) // /api/users, with DemoGate.
-})
-router.Get(&quot;/health&quot;, healthHandler) // /health, without DemoGate.
-
-// Reuse a configured scope for several routes.
-api := router.Prefix(&quot;/api&quot;)
-api.Get(&quot;/status&quot;, statusHandler) // /api/status.</code></pre></div>
-<p>The old standalone usage has no configuration effect:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router.Prefix(&quot;/api&quot;) // Returned scope is discarded.
-router.Get(&quot;/user&quot;, getUser) // /user, not /api/user.</code></pre></div>
-<p>To migrate <code>router.Middlewares(m)</code> followed by route registrations, use <code>router = router.Middlewares(m)</code> or chain directly into <code>Get</code>/<code>Group</code>. The same rule applies inside group callbacks. <code>Group</code> ends the chain because it returns no value.</p>
-<p>All derived scopes share the mux, so routes registered through them are served by the original router. Registration itself still changes the shared route table. Endpoint methods (<code>router.Get(...).Middlewares(...)</code> and <code>.ExceptMiddlewares(...)</code>) continue configuring that registered endpoint directly.</p>
 <h2 id="groups-and-prefixes"><a class="heading-link" href="#groups-and-prefixes" aria-label="Link to Groups and prefixes">#</a>Groups and prefixes</h2>
-<p>Groups inherit a snapshot of their parent&#x27;s prefix and middleware list. Nested groups accumulate prefixes:</p>
-<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>router.Prefix(&quot;/api&quot;).Middlewares(core.NamedMiddleware{Name: &quot;auth&quot;, Middleware: DemoGate}).Group(func(api *core.Router) {
-    api.Prefix(&quot;/v1&quot;).Group(func(v1 *core.Router) {
-        v1.Get(&quot;/users/{id}&quot;, getUser) // /api/v1/users/{id}
-        v1.Get(&quot;/public&quot;, publicHandler).ExceptMiddlewares(&quot;auth&quot;)
+<p><code>Group</code> creates a child router that inherits a snapshot of its parent&#x27;s prefix and middleware list. Prefixes accumulate across nested groups:</p>
+<div class="code-block"><div class="code-toolbar"><span>go</span><button type="button" class="copy" aria-label="Copy code">Copy</button></div><pre tabindex="0"><code>auth := core.NamedMiddleware{Name: &quot;auth&quot;, Middleware: DemoGate}
+api := router.Prefix(&quot;/api&quot;).Middlewares(auth)
+
+api.Group(func(v1 *core.Router) {
+    v1.Prefix(&quot;/v1&quot;).Group(func(routes *core.Router) {
+        routes.Get(&quot;/users/{id}&quot;, getUser) // /api/v1/users/{id}, protected by auth.
+        routes.Get(&quot;/health&quot;, healthHandler).ExceptMiddlewares(&quot;auth&quot;)
     })
 })</code></pre></div>
-<p>Group configuration does not change the parent, and new scopes derived from the parent do not change existing groups. All groups share the underlying mux and configuration freeze state, so conflicts are checked across all registered routes.</p>
-<p><code>Prefix</code> appends to the prefix in the returned scope, leaving the receiver unchanged. Paths receive a leading slash and repeated slashes are collapsed; prefix trailing slashes are removed, while endpoint trailing slashes are preserved for subtree routing.</p>
-<p>Copies are shallow: referenced middleware state can remain shared between groups, endpoints, and concurrent requests. Middleware must synchronize mutable shared state or keep it request-local.</p>
+<p>Creating or configuring a child does not change its parent. Groups share the underlying mux and configuration freeze state, so route conflicts apply across all groups. Prefix changes affect routes registered through that derived router afterward. Paths are joined with a leading slash and repeated slashes are collapsed; prefix trailing slashes are removed, while endpoint trailing slashes are preserved for subtree routing.</p>
 <h2 id="serving-and-configuration-lifecycle"><a class="heading-link" href="#serving-and-configuration-lifecycle" aria-label="Link to Serving and configuration lifecycle">#</a>Serving and configuration lifecycle</h2>
 <p>Create routers with <code>core.NewRouter()</code>. Complete all route and middleware setup before serving requests.</p>
 <p>Pass the router directly to an HTTP server; it implements <code>http.Handler</code> through <code>ServeHTTP</code>:</p>

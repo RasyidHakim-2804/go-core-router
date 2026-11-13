@@ -2,6 +2,10 @@
 
 A lightweight Go HTTP router with Laravel-inspired route groups, prefixes, and middleware configuration. It builds on `net/http.ServeMux` and uses standard `http.ResponseWriter` and `*http.Request` handlers.
 
+## Why use this router?
+
+Go's `http.ServeMux` already handles method and path matching, including wildcards. This library keeps that standard router and adds a fluent way to derive route scopes with prefixes and middleware. It is useful when you want grouped route configuration while keeping ordinary `net/http` handlers. If you only need method/path matching, plain `ServeMux` may be enough; this package does not aim to replace full web frameworks.
+
 ## Features
 
 - Helpers for `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, and `OPTIONS`.
@@ -11,6 +15,19 @@ A lightweight Go HTTP router with Laravel-inspired route groups, prefixes, and m
 - Middleware additions, exclusions, and re-enabling at router, group, and endpoint level.
 - Named middleware instances and standard HTTP handler wrappers with context propagation.
 - Direct `http.Handler` compatibility and access to the underlying mux.
+
+## Contents
+
+- [Why use this router?](#why-use-this-router)
+- [Installation and quick start](#installation)
+- [Router scopes and chaining](#router-scopes-and-chaining)
+- [Registering routes](#registering-routes)
+- [Path parameters and wildcards](#path-parameters-and-wildcards)
+- [Middleware](#middleware)
+- [Groups and prefixes](#groups-and-prefixes)
+- [Serving and configuration lifecycle](#serving-and-configuration-lifecycle)
+- [Complete example](#running-the-complete-example)
+- [License](#license)
 
 ## Installation
 
@@ -51,7 +68,27 @@ func main() {
 
 Run `go run .`, then open `http://localhost:8000/hello`.
 
-The snippets below are configuration examples to place before starting the server. Handler names such as `listUsers` represent functions supplied by your application.
+The snippets below show configuration to complete before starting the server. Handler names such as `listUsers` represent functions supplied by your application.
+
+## Router scopes and chaining
+
+`Prefix`, `Middlewares`, and `ExceptMiddlewares` return a **derived router** with copied prefix and middleware configuration. They do not change the router they were called on. Use the returned router by continuing the chain or assigning it to a variable:
+
+```go
+api := router.Prefix("/api").Middlewares(Logging)
+api.Get("/users", listUsers) // /api/users; Logging runs first.
+
+router.Get("/health", healthHandler) // /health; the original router is unchanged.
+```
+
+Discarding the return value discards that configuration:
+
+```go
+router.Prefix("/api")
+router.Get("/users", listUsers) // /users, not /api/users.
+```
+
+Derived routers and groups share the same route table, so routes registered through any scope are served by the original router. Middleware lists are copied, but middleware functions may close over shared state. Make mutable captured state safe for concurrent requests.
 
 ## Registering routes
 
@@ -129,7 +166,7 @@ Middleware uses the standard Go wrapper signature:
 func(next http.Handler) http.Handler
 ```
 
-`core.Middleware` is an alias for this function type. `Middlewares` accepts plain functions and `core.NamedMiddleware` values (validated at registration). There are no `Before`/`After` methods or boolean continuation values.
+`core.Middleware` is an alias for this function type. `Middlewares` accepts plain functions and `core.NamedMiddleware` values. Unsupported values and nil middleware are rejected with a panic during configuration.
 
 ```go
 func Logging(next http.Handler) http.Handler {
@@ -177,39 +214,40 @@ The fixed key is only a demonstration. Real authentication must validate credent
 
 ### Router, group, and endpoint middleware
 
+`Middlewares` accepts one or more middleware functions or `core.NamedMiddleware` values. It uses `...any` to accept both forms, so unsupported values are rejected with a panic at configuration time rather than by the compiler. A separately defined named function type may need explicit conversion to `core.Middleware`.
+
 ```go
-router = router.Middlewares(Logging)
-router.Prefix("/api").Middlewares(DemoGate).Group(func(api *core.Router) {
-    api.Get("/users", listUsers)
-})
-router.Get("/details", detailsHandler).Middlewares(Logging)
+api := router.Middlewares(Logging, RequestMetrics)
+api.Get("/users", listUsers) // Logging, then RequestMetrics, then handler.
+
+router.Get("/details", detailsHandler).Middlewares(Logging) // Endpoint only.
 ```
 
-Router methods return a derived router; chain or save the result. Endpoint middleware methods modify only the registered endpoint. Middleware lists are copied, but captured state remains shared and must be safe for concurrent requests.
+Router middleware methods return derived routers. Endpoint middleware methods modify the endpoint returned by `Get`, `Post`, or `Handle`.
 
 ### Grouping middleware for several endpoints
 
-Need several middleware on multiple endpoints? Create a derived router scope with the shared middleware, then register its routes there. Add or exclude middleware on a narrower scope or individual endpoint as needed:
+Create a derived router scope with middleware shared by several routes. Here `RequestMetrics` and `RateLimit` are middleware functions supplied by the application. Then add middleware or exclude named middleware on a narrower scope or endpoint:
 
 ```go
-api := router.Prefix("/api").Middlewares(Logging, auth, Metrics)
+auth := core.NamedMiddleware{Name: "auth", Middleware: DemoGate}
+metrics := core.NamedMiddleware{Name: "metrics", Middleware: RequestMetrics}
 
-api.Get("/users", listUsers) // Logging + auth + Metrics.
+api := router.Prefix("/api").Middlewares(Logging, auth, metrics)
+api.Get("/users", listUsers) // Logging + auth + metrics.
 api.Get("/health", healthHandler).ExceptMiddlewares("auth")
 
-// This subgroup inherits the api middleware, adds rate limiting,
-// and removes Metrics for every route in that subgroup.
-api.Prefix("/admin").Middlewares(RateLimit).
-    ExceptMiddlewares("metrics").Group(func(admin *core.Router) {
-        admin.Get("/reports", reportsHandler)
-        admin.Get("/status", adminStatusHandler).ExceptMiddlewares("auth")
-    })
+// This subgroup inherits api's middleware, adds rate limiting,
+// and excludes metrics for every endpoint in the subgroup.
+admin := api.Prefix("/admin").Middlewares(RateLimit).ExceptMiddlewares("metrics")
+admin.Get("/reports", reportsHandler) // Logging + auth + RateLimit.
+admin.Get("/status", adminStatusHandler).ExceptMiddlewares("auth")
 
-// api and router remain unchanged by the derived scopes above.
-api.Get("/settings", settingsHandler) // Still Logging + auth + Metrics.
+// Creating admin did not change api.
+api.Get("/settings", settingsHandler) // Still Logging + auth + metrics.
 ```
 
-Use `NamedMiddleware` for middleware that must be excluded by name, such as `auth` and `metrics` above. Unnamed middleware such as `Logging` and `RateLimit` can be added to a scope, but cannot be selected for exclusion. The same applies when adding middleware directly to an endpoint: `.Middlewares(...)` adds wrappers, and `.ExceptMiddlewares(...)` disables named entries inherited by that endpoint.
+Middleware that needs to be excluded must be registered as `NamedMiddleware`, then excluded by its name. Unnamed middleware such as `Logging` or `RateLimit` can be added but cannot be selected for exclusion.
 
 ### Named middleware, exclusions, and re-enabling
 
@@ -258,7 +296,7 @@ quiet.Middlewares(auth).Get("/logged", loggedHandler) // Re-enable in a derived 
 
 The same name replaces/re-enables an entry in its original position; distinct names are independent. Excluding an unknown name retains a disabled placeholder. Later registration with that name re-enables its slot. Names are scoped to each copied middleware list, not a global registry. Anonymous wrappers cannot be excluded by name.
 
-Empty names, nil middleware functions, and unsupported values passed to `Middlewares` panic during configuration. Invalid batches do not partially update an endpoint. Use `NamedMiddleware` values, not pointers. A separately defined function type can be explicitly converted with `core.Middleware(fn)`.
+Names must be non-empty. Nil functions and unsupported values passed to `Middlewares` panic during configuration. Invalid batches do not partially update an endpoint. Use `NamedMiddleware` values, not pointers. A separately defined function type can be explicitly converted with `core.Middleware(fn)`.
 
 ### Execution order and chain construction
 
@@ -272,60 +310,23 @@ If B rejects, A resumes after its call to B; B's own code determines which clean
 
 Each endpoint builds its chain once, lazily on its first request, after configuration freezes. Constructors run from the last registered middleware to the first. Keep per-request state inside the returned handler, not in the constructor. Constructors must return a non-nil handler. Constructor panics (including nil-handler validation) are cached and repeated on subsequent requests to that endpoint; they are configuration bugs, not request-level rejection.
 
-### Migrating from Before/After middleware
-
-This is a breaking API change:
-
-- Replace the old struct embedding `core.Middleware` with a function taking and returning `http.Handler`.
-- Move `Before` logic before `next.ServeHTTP`; use `return` instead of `return false`.
-- Move cleanup from `After` into a `defer` inside the request handler.
-- Replace `NamedMiddleware{MiddlewareInterface: ...}` with `NamedMiddleware{Middleware: ...}`.
-- Replace `ExceptMiddlewares(instance)` with `ExceptMiddlewares("name")`, and register that middleware under the same name first.
-
-## Chaining without modifying the original router
-
-**Breaking change:** router-level `Prefix`, `Middlewares`, and `ExceptMiddlewares` now return a derived router. They never change the receiver's prefix or middleware configuration. Use the returned value:
-
-```go
-router.Prefix("/api").Middlewares(DemoGate).Group(func(api *core.Router) {
-    api.Get("/users", listUsers) // /api/users, with DemoGate.
-})
-router.Get("/health", healthHandler) // /health, without DemoGate.
-
-// Reuse a configured scope for several routes.
-api := router.Prefix("/api")
-api.Get("/status", statusHandler) // /api/status.
-```
-
-The old standalone usage has no configuration effect:
-
-```go
-router.Prefix("/api") // Returned scope is discarded.
-router.Get("/user", getUser) // /user, not /api/user.
-```
-
-To migrate `router.Middlewares(m)` followed by route registrations, use `router = router.Middlewares(m)` or chain directly into `Get`/`Group`. The same rule applies inside group callbacks. `Group` ends the chain because it returns no value.
-
-All derived scopes share the mux, so routes registered through them are served by the original router. Registration itself still changes the shared route table. Endpoint methods (`router.Get(...).Middlewares(...)` and `.ExceptMiddlewares(...)`) continue configuring that registered endpoint directly.
-
 ## Groups and prefixes
 
-Groups inherit a snapshot of their parent's prefix and middleware list. Nested groups accumulate prefixes:
+`Group` creates a child router that inherits a snapshot of its parent's prefix and middleware list. Prefixes accumulate across nested groups:
 
 ```go
-router.Prefix("/api").Middlewares(core.NamedMiddleware{Name: "auth", Middleware: DemoGate}).Group(func(api *core.Router) {
-    api.Prefix("/v1").Group(func(v1 *core.Router) {
-        v1.Get("/users/{id}", getUser) // /api/v1/users/{id}
-        v1.Get("/public", publicHandler).ExceptMiddlewares("auth")
+auth := core.NamedMiddleware{Name: "auth", Middleware: DemoGate}
+api := router.Prefix("/api").Middlewares(auth)
+
+api.Group(func(v1 *core.Router) {
+    v1.Prefix("/v1").Group(func(routes *core.Router) {
+        routes.Get("/users/{id}", getUser) // /api/v1/users/{id}, protected by auth.
+        routes.Get("/health", healthHandler).ExceptMiddlewares("auth")
     })
 })
 ```
 
-Group configuration does not change the parent, and new scopes derived from the parent do not change existing groups. All groups share the underlying mux and configuration freeze state, so conflicts are checked across all registered routes.
-
-`Prefix` appends to the prefix in the returned scope, leaving the receiver unchanged. Paths receive a leading slash and repeated slashes are collapsed; prefix trailing slashes are removed, while endpoint trailing slashes are preserved for subtree routing.
-
-Copies are shallow: referenced middleware state can remain shared between groups, endpoints, and concurrent requests. Middleware must synchronize mutable shared state or keep it request-local.
+Creating or configuring a child does not change its parent. Groups share the underlying mux and configuration freeze state, so route conflicts apply across all groups. Prefix changes affect routes registered through that derived router afterward. Paths are joined with a leading slash and repeated slashes are collapsed; prefix trailing slashes are removed, while endpoint trailing slashes are preserved for subtree routing.
 
 ## Serving and configuration lifecycle
 
