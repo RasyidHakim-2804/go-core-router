@@ -187,24 +187,73 @@ router.Get("/details", detailsHandler).Middlewares(Logging)
 
 Router methods return a derived router; chain or save the result. Endpoint middleware methods modify only the registered endpoint. Middleware lists are copied, but captured state remains shared and must be safe for concurrent requests.
 
-### Named middleware, exclusions, and re-enabling
+### Grouping middleware for several endpoints
 
-Functions are not compared by identity. Every unnamed middleware registration appends a new wrapper, even if the same function was already registered. Use names to replace, exclude, or re-enable middleware:
+Need several middleware on multiple endpoints? Create a derived router scope with the shared middleware, then register its routes there. Add or exclude middleware on a narrower scope or individual endpoint as needed:
 
 ```go
-access := core.NamedMiddleware{Name: "access", Middleware: Logging}
-auth := core.NamedMiddleware{Name: "auth", Middleware: DemoGate}
-router = router.Middlewares(access, auth)
+api := router.Prefix("/api").Middlewares(Logging, auth, Metrics)
 
-router.Get("/health", healthHandler).ExceptMiddlewares("access", "auth")
+api.Get("/users", listUsers) // Logging + auth + Metrics.
+api.Get("/health", healthHandler).ExceptMiddlewares("auth")
+
+// This subgroup inherits the api middleware, adds rate limiting,
+// and removes Metrics for every route in that subgroup.
+api.Prefix("/admin").Middlewares(RateLimit).
+    ExceptMiddlewares("metrics").Group(func(admin *core.Router) {
+        admin.Get("/reports", reportsHandler)
+        admin.Get("/status", adminStatusHandler).ExceptMiddlewares("auth")
+    })
+
+// api and router remain unchanged by the derived scopes above.
+api.Get("/settings", settingsHandler) // Still Logging + auth + Metrics.
+```
+
+Use `NamedMiddleware` for middleware that must be excluded by name, such as `auth` and `metrics` above. Unnamed middleware such as `Logging` and `RateLimit` can be added to a scope, but cannot be selected for exclusion. The same applies when adding middleware directly to an endpoint: `.Middlewares(...)` adds wrappers, and `.ExceptMiddlewares(...)` disables named entries inherited by that endpoint.
+
+### Named middleware, exclusions, and re-enabling
+
+Functions are not compared by identity. Every unnamed middleware registration appends a new wrapper, even if the same function was already registered. A name lets you replace, exclude, or re-enable a specific middleware instance. This matters when one factory creates middleware with different configuration:
+
+```go
+func LoggingWithLevel(level string) core.Middleware {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            log.Printf("[%s] %s %s", level, r.Method, r.URL.Path)
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+
+info := core.NamedMiddleware{
+    Name:       "request-info",
+    Middleware: LoggingWithLevel("info"),
+}
+debug := core.NamedMiddleware{
+    Name:       "request-debug",
+    Middleware: LoggingWithLevel("debug"),
+}
+
+router = router.Middlewares(info, debug)
+router.Get("/health", healthHandler).ExceptMiddlewares("request-info")
+```
+
+Both entries come from `LoggingWithLevel`, but each closure keeps its own level. The health endpoint excludes only the info logger; debug logging remains active. The names are identifiers for configuration, not middleware code. Without names, function identity cannot reliably distinguish closures with different captured settings.
+
+The same mechanism works across router, group, and endpoint scopes:
+
+```go
+auth := core.NamedMiddleware{Name: "auth", Middleware: DemoGate}
+router = router.Middlewares(auth)
+router.Get("/health", healthHandler).ExceptMiddlewares("auth")
 router.Prefix("/public").ExceptMiddlewares("auth").Group(func(public *core.Router) {
     public.Get("/info", infoHandler)
-    public.Get("/private", privateHandler).Middlewares(auth)
+    public.Get("/private", privateHandler).Middlewares(auth) // Re-enable for this endpoint.
 })
 
-quiet := router.ExceptMiddlewares("access")
+quiet := router.ExceptMiddlewares("auth")
 quiet.Get("/quiet", quietHandler)
-quiet.Middlewares(access).Get("/logged", loggedHandler)
+quiet.Middlewares(auth).Get("/logged", loggedHandler) // Re-enable in a derived scope.
 ```
 
 The same name replaces/re-enables an entry in its original position; distinct names are independent. Excluding an unknown name retains a disabled placeholder. Later registration with that name re-enables its slot. Names are scoped to each copied middleware list, not a global registry. Anonymous wrappers cannot be excluded by name.
@@ -304,7 +353,7 @@ The first request, even an unmatched request, freezes configuration for the rout
 
 ## Running the complete example
 
-[`example/main.go`](example/main.go) demonstrates all route helpers, parameters, wildcard matching, nested groups, middleware scopes and exclusions, named middleware, `Handle`, and panic cleanup.
+[The complete example in `example/main.go`](https://github.com/RasyidHakim-2804/go-core-router/blob/main/example/main.go) demonstrates all route helpers, parameters, wildcard matching, nested groups, middleware scopes and exclusions, named middleware, `Handle`, and panic cleanup.
 
 From this repository:
 
